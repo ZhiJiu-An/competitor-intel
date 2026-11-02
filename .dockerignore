@@ -1,0 +1,22 @@
+# 构建上下文排除：密钥、运行时数据、缓存
+.env
+.env.*
+!.env.example
+
+data/
+scripts/.logs/
+scripts/.run/
+.git/
+.github/
+
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+**/__pycache__/
+*.pyc
+*.egg-info/
+celerybeat-schedule*
+
+.DS_Store
+*.log
+</content>

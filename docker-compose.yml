@@ -1,0 +1,48 @@
+# 服务化部署（P1）：api / worker / beat / redis 四进程
+# 启动：docker compose up -d --build
+# api 与 worker 共享 data 卷，SQLite 以 WAL 模式支持并发读；LLM 配置来自 .env
+
+x-app: &app
+  build: .
+  env_file: .env
+  environment:
+    REDIS_URL: redis://redis:6379/0
+    DB_PATH: data/snapshots.db
+    REPORT_DIR: data/reports
+  volumes:
+    - app-data:/app/data
+  depends_on:
+    redis:
+      condition: service_healthy
+
+services:
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  api:
+    <<: *app
+    command: ["uvicorn", "competitor_intel.api:app", "--host", "0.0.0.0", "--port", "8000"]
+    ports:
+      # 默认只监听本机；如需对外暴露，改回 "8000:8000" 并务必设置 API_TOKEN
+      - "127.0.0.1:8000:8000"
+
+  worker:
+    <<: *app
+    # Playwright 在任务内创建浏览器，prefork 子进程不继承父实例
+    command: ["celery", "-A", "competitor_intel.tasks:celery_app", "worker", "--loglevel=INFO", "--concurrency=2"]
+
+  beat:
+    <<: *app
+    command: ["celery", "-A", "competitor_intel.tasks:celery_app", "beat", "--loglevel=INFO"]
+
+volumes:
+  app-data:
+  redis-data:

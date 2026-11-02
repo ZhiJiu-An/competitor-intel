@@ -1,0 +1,12 @@
+defaults:
+  request_interval_s: 2          # 合规：请求间隔 >= 2s
+  respect_robots: true
+  timeout_s: 30
+  cache_mode: bypass             # L1 缓存无 TTL，会把一次错误渲染永久固化；增量由业务指纹负责
+
+targets:
+  - competitor: deepseek
+    pages:
+      - type: pricing
+        url: https://api-docs.deepseek.com/quick_start/pricing
+        main_selector: "main"              # 指纹容器：只比较正文区域
