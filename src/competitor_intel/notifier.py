@@ -9,20 +9,62 @@
 """
 
 import json
+import re
+import urllib.request
 from datetime import date
+from pathlib import Path
+from urllib.parse import quote
 
 import structlog
-import urllib.request
 
 log = structlog.get_logger(__name__)
 
 DEFAULT_KEYWORD = "竞品分析"
+MAX_CHANGE_ROWS = 8  # 卡片只放摘要，完整明细看报告
 
 STATUS_EMOJI = {
     "succeeded": "✅",
     "partial": "⚠️",
     "failed": "❌",
 }
+
+STATUS_LABEL = {
+    "succeeded": "成功",
+    "partial": "部分成功",
+    "failed": "失败",
+    "queued": "排队中",
+    "running": "运行中",
+}
+
+# 字段路径是给程序看的，卡片里换成中文标签，避免满屏 pricing_tiers[...]
+_TIER_ATTRS = {
+    "amount": "价格",
+    "currency": "货币",
+    "billing_period": "计费周期",
+    "pricing_model": "计费模式",
+    "key_limits": "关键限制",
+    "components": "计费项",
+}
+_FEATURE_ATTRS = {"name": "名称", "description": "描述", "category": "分类"}
+
+
+def _field_label(field: str) -> str:
+    """pricing_tiers[Pro].amount → 套餐 Pro · 价格；认不出就原样返回。"""
+    match = re.fullmatch(r"pricing_tiers\[(.+?)\](?:\.(\w+))?", field)
+    if match:
+        tier, attr = match.groups()
+        if not attr:
+            return f"套餐 {tier}"
+        return f"套餐 {tier} · {_TIER_ATTRS.get(attr, attr)}"
+
+    match = re.fullmatch(r"feature_items\[(.+?)\](?:\.(\w+))?", field)
+    if match:
+        name, attr = match.groups()
+        if not attr:
+            return f"功能 {name}"
+        return f"功能 {name} · {_FEATURE_ATTRS.get(attr, attr)}"
+
+    return field.replace("_", " ").strip() or field
 
 
 def _http_post_json(url: str, payload: dict, *, timeout: float = 8.0) -> tuple[int, str]:
@@ -45,12 +87,78 @@ def _http_post_json(url: str, payload: dict, *, timeout: float = 8.0) -> tuple[i
         raise RuntimeError(str(exc)) from exc
 
 
-def _build_card(run_result: dict, *, keyword: str = DEFAULT_KEYWORD) -> dict:
+def _clip(value: object, limit: int = 36) -> str:
+    if value is None or value == "":
+        return "—"
+    text = " ".join(str(value).split())
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
+def _grid(cells: list[tuple[str, int]]) -> dict:
+    """一行多列：飞书卡片没有原生表格元素，用 column_set 拼出表格观感。"""
+    return {
+        "tag": "column_set",
+        "flex_mode": "none",
+        "horizontal_spacing": "default",
+        "columns": [
+            {
+                "tag": "column",
+                "width": "weighted",
+                "weight": weight,
+                "elements": [
+                    {"tag": "div", "text": {"tag": "lark_md", "content": content}}
+                ],
+            }
+            for content, weight in cells
+        ],
+    }
+
+
+def _change_rows(differences: list[dict]) -> tuple[list[dict], int]:
+    """摊平成「竞品 / 字段 / 旧 → 新」三列，返回 (行元素, 被省略的行数)。"""
+    rows: list[dict] = []
+    total = 0
+    for diff in differences:
+        competitor = diff.get("competitor") or "unknown"
+        page_url = diff.get("page_url") or ""
+        label = f"[{competitor}]({page_url})" if page_url else competitor
+        for change in diff.get("changes") or []:
+            total += 1
+            if len(rows) >= MAX_CHANGE_ROWS:
+                continue
+            rows.append(
+                _grid(
+                    [
+                        (label, 2),
+                        (_field_label(str(change.get("field", ""))), 4),
+                        (f"{_clip(change.get('old'))} → {_clip(change.get('new'))}", 4),
+                    ]
+                )
+            )
+    return rows, max(total - len(rows), 0)
+
+
+def _report_url(report_path: str | None, base_url: str | None) -> str | None:
+    if not report_path or not base_url:
+        return None
+    name = Path(str(report_path)).name
+    return f"{base_url.rstrip('/')}/reports/{quote(name)}"
+
+
+def _build_card(
+    run_result: dict,
+    *,
+    keyword: str = DEFAULT_KEYWORD,
+    report_base_url: str | None = None,
+) -> dict:
     """把 run 摘要渲染成飞书 interactive card。
 
     run_result 是 service.execute_run 的返回值：
       {run_id, status, processed, extracted, skipped, blocked,
-       extraction_error, fallback, errors, metrics, report_path}
+       extraction_error, fallback, errors, metrics, report_path, differences}
+
+    卡片包含三块：指标摘要 / 变更明细表 / 完整报告按钮。
+    明细表用 column_set 拼三列，竞品名链到被监控的原页面。
     """
     status = run_result.get("status", "unknown")
     emoji = STATUS_EMOJI.get(status, "🔔")
@@ -59,19 +167,65 @@ def _build_card(run_result: dict, *, keyword: str = DEFAULT_KEYWORD) -> dict:
     counts = run_result
     metrics = counts.get("metrics", {})
 
+    rates = (
+        f"skip_rate **{metrics.get('skip_rate', 0.0):.1%}**　"
+        f"fallback_rate **{metrics.get('fallback_rate', 0.0):.1%}**　"
+        f"extraction_error_rate **{metrics.get('extraction_error_rate', 0.0):.1%}**"
+    )
+
     lines = [
         f"{emoji} **{keyword} · {today}**",
-        f"状态: **{status}**  |  处理 **{counts.get('processed', 0)}** 页  |  抽取成功 **{counts.get('extracted', 0)}**",
-        f"跳过: {counts.get('skipped', 0)}  |  兜底: {counts.get('fallback', 0)}  |  抽取失败: {counts.get('extraction_error', 0)}  |  运行异常: {counts.get('errors', 0)}",
+        f"状态：**{STATUS_LABEL.get(status, status)}**　处理 **{counts.get('processed', 0)}** 页　抽取成功 **{counts.get('extracted', 0)}**",
+        f"跳过 {counts.get('skipped', 0)}　兜底 {counts.get('fallback', 0)}　抽取失败 {counts.get('extraction_error', 0)}　运行异常 {counts.get('errors', 0)}",
         "",
-        f"skip_rate: **{metrics.get('skip_rate', 0.0):.2%}**  |  fallback_rate: **{metrics.get('fallback_rate', 0.0):.2%}**  |  extraction_error_rate: **{metrics.get('extraction_error_rate', 0.0):.2%}**",
+        f"比率：{rates}",
     ]
-    if counts.get("report_path"):
-        lines.append(f"报告: `{counts['report_path']}`")
     if status == "failed" or counts.get("errors"):
         lines.append("⚠️ 有异常，请查看 run 记录或 review_queue。")
 
-    content_markdown = "\n".join(lines)
+    elements: list[dict] = [
+        {"tag": "div", "text": {"tag": "lark_md", "content": "\n".join(lines)}},
+        {"tag": "hr"},
+        {"tag": "div", "text": {"tag": "lark_md", "content": "**变更明细**"}},
+    ]
+
+    rows, hidden = _change_rows(run_result.get("differences") or [])
+    if rows:
+        elements.append(_grid([("**竞品**", 2), ("**字段**", 4), ("**旧 → 新**", 4)]))
+        elements.extend(rows)
+        if hidden:
+            elements.append(
+                {
+                    "tag": "div",
+                    "text": {
+                        "tag": "lark_md",
+                        "content": f"还有 {hidden} 条未展示，见完整报告",
+                    },
+                }
+            )
+    else:
+        elements.append(
+            {
+                "tag": "div",
+                "text": {"tag": "lark_md", "content": "本期无字段级变化"},
+            }
+        )
+
+    url = _report_url(run_result.get("report_path"), report_base_url)
+    if url:
+        elements.append(
+            {
+                "tag": "action",
+                "actions": [
+                    {
+                        "tag": "button",
+                        "text": {"tag": "plain_text", "content": "查看完整报告"},
+                        "type": "default",
+                        "url": url,
+                    }
+                ],
+            }
+        )
 
     return {
         "config": {"wide_screen_mode": True},
@@ -83,16 +237,17 @@ def _build_card(run_result: dict, *, keyword: str = DEFAULT_KEYWORD) -> dict:
                 "failed": "red",
             }.get(status, "blue"),
         },
-        "elements": [
-            {
-                "tag": "div",
-                "text": {"tag": "lark_md", "content": content_markdown},
-            }
-        ],
+        "elements": elements,
     }
 
 
-def send_feishu(run_result: dict, *, webhook: str, keyword: str = DEFAULT_KEYWORD) -> bool:
+def send_feishu(
+    run_result: dict,
+    *,
+    webhook: str,
+    keyword: str = DEFAULT_KEYWORD,
+    report_base_url: str | None = None,
+) -> bool:
     """发送飞书卡片，任何错误返回 False 并写 warning，**绝不抛异常**。
 
     返回 True 仅代表 HTTP 200 且飞书回包 code=0。
@@ -102,7 +257,9 @@ def send_feishu(run_result: dict, *, webhook: str, keyword: str = DEFAULT_KEYWOR
 
     payload = {
         "msg_type": "interactive",
-        "card": _build_card(run_result, keyword=keyword),
+        "card": _build_card(
+            run_result, keyword=keyword, report_base_url=report_base_url
+        ),
     }
 
     try:

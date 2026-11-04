@@ -103,7 +103,8 @@ async def _fetch_html(target: Target, settings: Settings, defaults: Defaults) ->
     try:
         from crawl4ai import BrowserConfig, CacheMode, CrawlerRunConfig
 
-        browser_cfg = BrowserConfig(headless=True)
+        # Crawl4AI 实际读取的是 chrome_channel（channel 只用于 cdp 场景）
+        browser_cfg = BrowserConfig(headless=True, chrome_channel=settings.browser_channel)
         run_cfg = CrawlerRunConfig(
             cache_mode=(
                 CacheMode.ENABLED if defaults.cache_mode == "enabled" else CacheMode.BYPASS
@@ -126,12 +127,19 @@ async def _fetch_html(target: Target, settings: Settings, defaults: Defaults) ->
     return html
 
 
-async def _playwright_html(target: Target, defaults: Defaults) -> str:
-    """Playwright 兜底：只直取 page.content()，不承担抽取。"""
+async def _playwright_html(target: Target, defaults: Defaults, settings: Settings) -> str:
+    """Playwright 兜底：只直取 page.content()，不承担抽取。
+
+    浏览器通道与主路径一致（settings.browser_channel）：本机没装 Playwright 自带
+    chromium 时用 chrome 复用系统已安装的浏览器。
+    """
     from playwright.async_api import async_playwright
 
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
+        launch_kwargs: dict = {"headless": True}
+        if settings.browser_channel and settings.browser_channel != "chromium":
+            launch_kwargs["channel"] = settings.browser_channel
+        browser = await p.chromium.launch(**launch_kwargs)
         try:
             page = await browser.new_page()
             await page.goto(
@@ -299,7 +307,7 @@ async def playwright_fallback(
     if not await _allowed_by_robots(target.url, defaults):
         return FetchResult(target=target, status="blocked")
     await _throttle(defaults.request_interval_s)
-    html = await _playwright_html(target, defaults)
+    html = await _playwright_html(target, defaults, settings)
     result = await _process_html(target, html, force=force, settings=settings)
     return result.model_copy(update={"used_fallback": True})
 

@@ -114,6 +114,57 @@ def test_snapshots_query_filters(client, settings):
     assert none["count"] == 0
 
 
+def test_crawl_endpoint_returns_snapshot_and_report(client, settings, monkeypatch):
+    """临时抓取：页面不必在 targets.yaml 里，同步返回快照 + 临时报告链接。"""
+    import asyncio
+
+    from competitor_intel import service as service_module
+    from competitor_intel.collector import FetchResult
+    from competitor_intel.store import init_db
+
+    asyncio.run(init_db(settings.db_path))
+
+    async def fake_fetch(target, *, force=False, settings=None, defaults=None):
+        snapshot = CompetitorSnapshot(
+            competitor_name=target.competitor,
+            page_url=target.url,
+            snapshot_date="2026-11-04",
+            page_type=target.page_type,
+            pricing_tiers=[PricingTier(name="Pro", amount=129.0, currency="USD")],
+        )
+        return FetchResult(
+            target=target, status="extracted", content_hash="h1", snapshot=snapshot
+        )
+
+    monkeypatch.setattr(service_module, "fetch_and_extract", fake_fetch)
+
+    resp = client.post(
+        "/crawl",
+        json={
+            "url": "https://acme.example/pricing",
+            "competitor": "acme",
+            "page_type": "pricing",
+        },
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "extracted"
+    assert body["snapshot"]["pricing_tiers"][0]["amount"] == 129.0
+    assert body["competitor"] == "acme"
+    assert body["report"]["name"].startswith("adhoc/")
+    assert body["report"]["url"] == (
+        f"http://127.0.0.1:8000/reports/{body['report']['name']}"
+    )
+
+    page = client.get(f"/reports/{body['report']['name']}")
+    assert page.status_code == 200
+    assert page.headers["content-type"].startswith("text/html")
+
+    bad = client.post("/crawl", json={"url": "not-a-url"})
+    assert bad.status_code == 422
+
+
 def test_latest_report_404_then_markdown(client, settings):
     assert client.get("/reports/latest").status_code == 404
 
@@ -127,6 +178,31 @@ def test_latest_report_404_then_markdown(client, settings):
     assert resp.status_code == 200
     assert "Pro 99 -> 129" in resp.text
     assert resp.headers["content-type"].startswith("text/markdown")
+
+
+def test_report_direct_link_for_feishu_button(client, settings):
+    """卡片按钮走浏览器打开，无法带 token，因此该路由不鉴权，且渲染成 HTML。"""
+    from pathlib import Path
+
+    report_dir = Path(settings.report_dir)
+    report_dir.mkdir(parents=True, exist_ok=True)
+    (report_dir / "2026-11-03.md").write_text(
+        "# 报告\n\n| 套餐 | 价格 |\n| --- | --- |\n| Pro | 129 |", encoding="utf-8"
+    )
+
+    ok = client.get("/reports/2026-11-03.md")
+    assert ok.status_code == 200
+    assert ok.headers["content-type"].startswith("text/html")
+    assert "<table>" in ok.text
+    assert "<td>Pro</td>" in ok.text and "<td>129</td>" in ok.text
+    assert "# 报告" not in ok.text  # 裸 Markdown 不应直接漏到页面上
+
+    raw = client.get("/reports/2026-11-03.md", params={"raw": 1})
+    assert raw.headers["content-type"].startswith("text/markdown")
+    assert raw.text.startswith("# 报告")
+
+    assert client.get("/reports/missing.md").status_code == 404
+    assert client.get("/reports/evil.txt").status_code == 400
 
 
 def test_api_token_required_when_configured(settings, dispatched):

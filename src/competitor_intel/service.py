@@ -7,14 +7,20 @@
 """
 
 import json
+import re
 import uuid
 from datetime import date, datetime
+from pathlib import Path
+from urllib.parse import quote, urlparse
 
 import structlog
 
-from .config import Settings
+from .collector import fetch_and_extract
+from .config import Defaults, Settings, Target, load_config
+from .diff import diff_snapshots
 from .graph import run_pipeline
-from .store import create_run, init_db, update_run
+from .reporter import render_report
+from .store import create_run, init_db, latest_snapshot, update_run
 
 log = structlog.get_logger(__name__)
 
@@ -156,13 +162,22 @@ async def execute_run(
         finished_at=_now(),
     )
     result = {"run_id": run_id, "status": status, **counts, "report_path": state.get("report_path")}
+    # 把字段级变化一并交给推送层：卡片要能直接展示明细，而不是只给计数。
+    result["differences"] = [
+        diff.model_dump() for diff in state.get("diffs") or []
+    ]
 
     # 推送（任何异常静默吞掉，绝不影响主流程）
     if settings.feishu_webhook:
         try:
             from .notifier import send_feishu
 
-            send_feishu(result, webhook=settings.feishu_webhook, keyword=settings.feishu_keyword)
+            send_feishu(
+                result,
+                webhook=settings.feishu_webhook,
+                keyword=settings.feishu_keyword,
+                report_base_url=settings.report_base_url,
+            )
         except Exception as exc:
             log.warning("notify.failed", error=str(exc))
 
@@ -171,3 +186,95 @@ async def execute_run(
 
 def _now() -> str:
     return datetime.now().isoformat(timespec="seconds")
+
+
+# ---------------------------------------------------------------- 临时抓取（MCP「眼睛」）
+
+ADHOC_SUBDIR = "adhoc"
+_SLUG_RE = re.compile(r"[^0-9A-Za-z._-]+")
+
+
+def default_competitor(url: str) -> str:
+    """没给竞品名时用域名兜底，保证快照仍可按 competitor 查询。"""
+    host = urlparse(url).netloc.split("@")[-1].split(":")[0]
+    return host[4:] if host.startswith("www.") else host or "unknown"
+
+
+def _slug(name: str) -> str:
+    return _SLUG_RE.sub("-", name).strip("-") or "page"
+
+
+def _load_defaults() -> Defaults:
+    try:
+        return load_config(DEFAULT_CONFIG).defaults
+    except Exception:  # 配置缺失时用内置默认值，不阻断临时抓取
+        return Defaults()
+
+
+async def crawl_page(
+    settings: Settings,
+    *,
+    url: str,
+    competitor: str | None = None,
+    page_type: str = "pricing",
+    main_selector: str | None = None,
+    force: bool = False,
+) -> dict:
+    """临时抓取任意页面：抓取 -> 抽取 -> 与上次快照对比 -> 生成临时报告。
+
+    与定时任务的差别：只处理这一页、不用 targets.yaml、不做 LLM 解读，
+    适合 AI「现在就看一眼这个页面」。结果仍写入快照库，因此天然可追溯。
+    """
+    competitor = competitor or default_competitor(url)
+    target = Target(
+        competitor=competitor,
+        page_type=page_type,
+        url=url,
+        main_selector=main_selector or "body",
+    )
+
+    # 基线必须在抓取前取：同一天重复抓取会覆盖当天那一条，抓完就取不到旧版了
+    baseline = await latest_snapshot(settings.db_path, competitor, url)
+    result = await fetch_and_extract(
+        target, force=force, settings=settings, defaults=_load_defaults()
+    )
+
+    diffs = []
+    if result.status == "extracted" and result.snapshot is not None and baseline is not None:
+        diff = diff_snapshots(baseline, result.snapshot)
+        if diff.changed:
+            diffs.append(diff)
+
+    report: dict | None = None
+    if result.snapshot is not None:
+        rel = (
+            f"{ADHOC_SUBDIR}/{date.today().isoformat()}-{_slug(competitor)}-{page_type}.md"
+        )
+        path = render_report(
+            [result.snapshot],
+            diffs,
+            ["临时抓取：仅做字段级对比，未调用 LLM 生成解读。"],
+            out=Path(settings.report_dir) / rel,
+        )
+        report = {
+            "path": str(path),
+            "name": rel,
+            "url": f"{settings.report_base_url.rstrip('/')}/reports/{quote(rel, safe='/')}",
+        }
+
+    response = {
+        "competitor": competitor,
+        "page_url": url,
+        "page_type": page_type,
+        "status": result.status,
+        "used_fallback": result.used_fallback,
+        "snapshot_date": result.snapshot.snapshot_date if result.snapshot else None,
+        "baseline_date": baseline.snapshot_date if baseline else None,
+        "snapshot": result.snapshot.model_dump(mode="json") if result.snapshot else None,
+        "changes": [change.model_dump() for diff in diffs for change in diff.changes],
+        "error_detail": result.error_detail,
+        "report": report,
+    }
+    if result.status == "blocked":
+        response["note"] = "robots.txt 不允许抓取该页面，未写入数据库"
+    return response

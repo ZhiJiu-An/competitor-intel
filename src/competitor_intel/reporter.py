@@ -90,6 +90,17 @@ def render_report(
 
     lines += ["## 当前定价快照", ""] + _pricing_table(rows) + [""]
 
+    lines += [
+        "## 指标说明",
+        "",
+        "| 字段 | 中文 | 含义与计算方式 |",
+        "| --- | --- | --- |",
+        "| skip_rate | 跳过率 | 指纹未变、直接跳过不重抓的页数 ÷ 处理页数 |",
+        "| fallback_rate | 兜底率 | LLM 抽取失败后改用规则解析的页数 ÷ 处理页数 |",
+        "| extraction_error_rate | 抽取失败率 | 抽取失败页数 ÷（抽取成功＋抽取失败） |",
+        "",
+    ]
+
     if out is not None:
         path = Path(out)
     else:

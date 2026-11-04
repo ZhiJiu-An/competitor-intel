@@ -63,6 +63,10 @@ class Settings(BaseModel):
     api_token: str = ""  # 留空则不鉴权（默认仅监听 127.0.0.1）
     feishu_webhook: str = ""  # 留空则不推送
     feishu_keyword: str = "竟品分析"  # webhook 关键词校验时用
+    report_base_url: str = "http://127.0.0.1:8000"  # 卡片里报告按钮的地址前缀
+    # 浏览器通道：默认用 Playwright 自带的 chromium；本机没装浏览器时
+    # 设 CRAWLER_BROWSER_CHANNEL=chrome 直接复用已安装的 Chrome。
+    browser_channel: str = "chromium"
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -79,6 +83,8 @@ class Settings(BaseModel):
             api_token=os.getenv("API_TOKEN", ""),
             feishu_webhook=os.getenv("FEISHU_WEBHOOK", ""),
             feishu_keyword=os.getenv("FEISHU_KEYWORD", "竞品分析"),
+            report_base_url=os.getenv("REPORT_BASE_URL", "http://127.0.0.1:8000"),
+            browser_channel=os.getenv("CRAWLER_BROWSER_CHANNEL", "chromium"),
         )
 
 

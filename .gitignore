@@ -24,4 +24,7 @@ celerybeat-schedule*
 # 密钥与系统文件
 .env
 .DS_Store
+
+# 本地写作草稿（不公开）
+articles/
 </content>

@@ -204,6 +204,7 @@ FEISHU_KEYWORD=竞品分析        # webhook 若开了关键词校验，卡片�
 | `FEISHU_WEBHOOK` | 空 | 留空则不推送 |
 | `REDIS_URL` | `redis://127.0.0.1:6379/0` | Celery broker / backend |
 | `DAILY_CRON_HOUR` | `9` | beat 每日触发小时 |
+| `CRAWLER_BROWSER_CHANNEL` | `chromium` | 浏览器通道；本机没装 Playwright 自带 chromium 时设 `chrome` 复用系统 Chrome |
 
 ## 数据契约
 

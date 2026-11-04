@@ -102,7 +102,7 @@ async def test_fallback_path(monkeypatch, target, settings, defaults):
     async def broken_fetch(target, settings, defaults):
         raise RuntimeError("crawl4ai 崩溃")
 
-    async def fake_playwright(target, defaults):
+    async def fake_playwright(target, defaults, settings):
         return HTML
 
     async def fake_extract(html, url, settings):
