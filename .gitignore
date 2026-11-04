@@ -10,9 +10,12 @@ dist/
 
 # 运行时数据与产物
 data/*.db
+data/*.db-shm
+data/*.db-wal
 data/.crawl4ai/
 data/smoke/
 data/reports/*.md
+data/reports/**/*.md
 !data/reports/.gitkeep
 
 # 本地服务进程

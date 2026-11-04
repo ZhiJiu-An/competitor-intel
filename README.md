@@ -32,7 +32,7 @@
 - **断点恢复** —— LangGraph checkpoint，中断后从下一个目标续跑
 - **配置化** —— 新增竞品只改 `targets.yaml`，不写代码
 - **两种入口** —— CLI / HTTP + Celery 定时 / stdio MCP，共用一个内核
-- **飞书推送** —— run 结束自动推卡片（变更明细 + 报告直达链接），可开关
+- **飞书推送** —— 有字段级变化才推（默认），也可切成每天必推；卡片含变更明细 + 报告直达链接
 
 ## 工作原理
 
@@ -275,13 +275,16 @@ curl localhost:8000/runs/<run_id>
 
 ## 飞书推送
 
-配好 webhook 后，每次定时 run 结束自动推一张卡片（状态色 / 计数 / 三个比率 / 变更明细表 / 报告按钮）：
+配好 webhook 后，定时 run 结束会按 `FEISHU_NOTIFY_MODE` 推一张卡片（状态色 / 计数 / 三个比率 / 变更明细表 / 报告按钮）：
 
 ```bash
 FEISHU_WEBHOOK=https://open.feishu.cn/open-apis/bot/v2/hook/xxxx
 FEISHU_KEYWORD=竞品分析        # webhook 若开了关键词校验，卡片标题会自动带上
+FEISHU_NOTIFY_MODE=changes     # changes=有字段级变化才推（默认）；always=每天都推
 REPORT_BASE_URL=http://127.0.0.1:8000   # 报告按钮的地址前缀；远程访问时改成实际域名
 ```
+
+`changes` 模式下没有字段级变化时只记一条 `feishu.skipped` 日志，不发消息；`always` 模式适合想每天确认采集健康度的场景。
 
 推送失败只记 warning，**不影响 run 状态与返回值**。未配置 webhook 时内核完全不引入通知适配器。
 
@@ -299,6 +302,8 @@ REPORT_BASE_URL=http://127.0.0.1:8000   # 报告按钮的地址前缀；远程�
 | `API_TOKEN` | 空 | 设置后 API 需带 `X-API-Token` 请求头 |
 | `REPORT_BASE_URL` | `http://127.0.0.1:8000` | 飞书卡片里报告按钮的地址前缀 |
 | `FEISHU_WEBHOOK` | 空 | 留空则不推送 |
+| `FEISHU_KEYWORD` | `竞品分析` | webhook 关键词校验时自动加进标题 |
+| `FEISHU_NOTIFY_MODE` | `changes` | `changes`=有字段级变化才推；`always`=每次都推 |
 | `REDIS_URL` | `redis://127.0.0.1:6379/0` | Celery broker / backend |
 | `DAILY_CRON_HOUR` | `9` | beat 每日触发小时 |
 | `CRAWLER_BROWSER_CHANNEL` | `chromium` | 浏览器通道；本机没装 Playwright 自带 chromium 时设 `chrome` |

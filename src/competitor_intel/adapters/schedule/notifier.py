@@ -288,11 +288,21 @@ def send_feishu(
 
 
 def build_notifier(settings) -> Callable[[dict], None] | None:
-    """把 Settings 绑成 core.orchestrator 需要的推送钩子；未配置则返回 None。"""
+    """把 Settings 绑成 core.orchestrator 需要的推送钩子；未配置则返回 None。
+
+    FEISHU_NOTIFY_MODE 决定推送频率：
+    - changes（默认）：只有出现字段级变化才推，避免每天刷屏；
+    - always：每次 run 都推，适合想每天看一次健康度的人。
+    """
     if not settings.feishu_webhook:
         return None
 
+    mode = getattr(settings, "feishu_notify_mode", "changes")
+
     def _send(run_result: dict) -> None:
+        if mode == "changes" and not run_result.get("differences"):
+            log.info("feishu.skipped", reason="no_changes", run_id=run_result.get("run_id"))
+            return
         send_feishu(
             run_result,
             webhook=settings.feishu_webhook,

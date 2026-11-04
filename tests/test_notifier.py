@@ -4,7 +4,9 @@
 """
 
 import json
+from types import SimpleNamespace
 
+from competitor_intel.adapters.schedule import notifier
 from competitor_intel.adapters.schedule.notifier import MAX_CHANGE_ROWS, _build_card, send_feishu
 
 BASE = "http://127.0.0.1:8000"
@@ -96,3 +98,50 @@ def test_card_omits_button_without_report_path_or_base_url():
 
 def test_send_feishu_without_webhook_is_noop():
     assert send_feishu(_run_result(), webhook="") is False
+
+
+def _notifier_settings(**overrides) -> SimpleNamespace:
+    values = {
+        "feishu_webhook": "https://open.feishu.cn/open-apis/bot/v2/hook/test",
+        "feishu_keyword": "竞品分析",
+        "report_base_url": BASE,
+        "feishu_notify_mode": "changes",
+    }
+    values.update(overrides)
+    return SimpleNamespace(**values)
+
+
+def _spy_send(monkeypatch) -> list[dict]:
+    sent: list[dict] = []
+
+    def _fake(run_result, **_kwargs):
+        sent.append(run_result)
+        return True
+
+    monkeypatch.setattr(notifier, "send_feishu", _fake)
+    return sent
+
+
+def test_build_notifier_none_without_webhook():
+    assert notifier.build_notifier(_notifier_settings(feishu_webhook="")) is None
+
+
+def test_changes_mode_sends_only_when_differences_exist(monkeypatch):
+    sent = _spy_send(monkeypatch)
+    notify = notifier.build_notifier(_notifier_settings())
+
+    notify({**_run_result(), "differences": []})
+    assert sent == []
+
+    with_changes = _run_result()
+    notify(with_changes)
+    assert sent == [with_changes]
+
+
+def test_always_mode_sends_even_without_changes(monkeypatch):
+    sent = _spy_send(monkeypatch)
+    notify = notifier.build_notifier(_notifier_settings(feishu_notify_mode="always"))
+
+    quiet = {**_run_result(), "differences": []}
+    notify(quiet)
+    assert sent == [quiet]
