@@ -15,6 +15,7 @@
 
 import asyncio
 import json
+import os
 import threading
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -97,12 +98,12 @@ def _patch_litellm():
 async def main() -> None:
     from datetime import date, timedelta
 
-    from competitor_intel.config import Settings, Target
-    from competitor_intel.diff import diff_snapshots
-    from competitor_intel.graph import run_pipeline
-    from competitor_intel.models import CompetitorSnapshot, FeatureItem, PricingTier
-    from competitor_intel.reporter import render_report
-    from competitor_intel.store import (
+    from competitor_intel.core.config import Settings, Target
+    from competitor_intel.core.diff import diff_snapshots
+    from competitor_intel.core.graph import run_pipeline
+    from competitor_intel.core.models import CompetitorSnapshot, FeatureItem, PricingTier
+    from competitor_intel.core.reporter import render_report
+    from competitor_intel.core.store import (
         init_db,
         latest_snapshot,
         save_snapshot,
@@ -136,6 +137,7 @@ targets:
         llm_api_key="fake",
         db_path=str(WORK / "snapshots.db"),
         report_dir=str(WORK / "reports"),
+        browser_channel=os.getenv("CRAWLER_BROWSER_CHANNEL", "chromium"),
     )
 
     # 清掉上次冒烟残留（端口会变，残留行会让报告出现重复 URL）
