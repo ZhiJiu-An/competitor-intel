@@ -2,9 +2,9 @@
 
 import pytest
 
-from competitor_intel.config import Target
-from competitor_intel.models import CompetitorSnapshot, PricingTier
-from competitor_intel.store import (
+from competitor_intel.core.config import Target
+from competitor_intel.core.models import CompetitorSnapshot, PricingTier
+from competitor_intel.core.store import (
     init_db,
     latest_hash,
     latest_snapshot,

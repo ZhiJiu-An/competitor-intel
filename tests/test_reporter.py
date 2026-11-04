@@ -1,8 +1,8 @@
 """报告渲染测试（TDD 4.2）。"""
 
-from competitor_intel.diff import diff_snapshots
-from competitor_intel.models import CompetitorSnapshot, PriceComponent, PricingTier
-from competitor_intel.reporter import render_report
+from competitor_intel.core.diff import diff_snapshots
+from competitor_intel.core.models import CompetitorSnapshot, PriceComponent, PricingTier
+from competitor_intel.core.reporter import render_report
 
 
 def _snap(date: str, amount: float) -> CompetitorSnapshot:

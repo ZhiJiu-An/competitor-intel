@@ -18,9 +18,9 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 from pydantic import BaseModel, HttpUrl
 
-from .config import Settings
-from .service import DEFAULT_CONFIG, crawl_page, enqueue_run
-from .store import get_run, init_db, list_snapshot_records
+from ...core.config import Settings
+from ...core.orchestrator import crawl_page, enqueue_run
+from ...core.store import get_run, init_db, list_snapshot_records
 
 Dispatcher = Callable[[str, str, Optional[str], bool], None]
 
@@ -96,7 +96,7 @@ class CrawlRequest(BaseModel):
 
 
 def _default_dispatch(run_id: str, config_path: str, competitor: Optional[str], force: bool) -> None:
-    from .tasks import execute_run_task
+    from ..schedule.tasks import execute_run_task
 
     execute_run_task.delay(run_id, config_path, competitor, force)
 
@@ -126,16 +126,15 @@ def create_app(
 
     @app.post("/runs", dependencies=[Depends(_auth)])
     async def trigger_run(body: RunRequest) -> JSONResponse:
+        config_path = body.config or str(settings.targets_path)
         record, created = await enqueue_run(
             settings,
             competitor=body.competitor,
             force=body.force,
-            config_path=body.config or DEFAULT_CONFIG,
+            config_path=config_path,
         )
         if created:
-            dispatch(
-                record["id"], body.config or DEFAULT_CONFIG, body.competitor, body.force
-            )
+            dispatch(record["id"], config_path, body.competitor, body.force)
         return JSONResponse(
             status_code=202 if created else 200,
             content={

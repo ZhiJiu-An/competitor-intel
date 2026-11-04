@@ -4,10 +4,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from competitor_intel import service
-from competitor_intel.config import Settings
-from competitor_intel.service import decide_status, execute_run, idempotency_key, summarize
-from competitor_intel.store import get_run
+from competitor_intel.core import orchestrator as service
+from competitor_intel.core.config import Settings
+from competitor_intel.core.orchestrator import decide_status, execute_run, idempotency_key, summarize
+from competitor_intel.core.store import get_run
 
 
 def _result(status: str, fallback: bool = False) -> SimpleNamespace:

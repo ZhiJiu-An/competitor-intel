@@ -3,7 +3,7 @@
 import pytest
 from pydantic import ValidationError
 
-from competitor_intel.models import CompetitorSnapshot, FeatureItem, PricingTier
+from competitor_intel.core.models import CompetitorSnapshot, FeatureItem, PricingTier
 
 
 def test_minimal_snapshot_passes():

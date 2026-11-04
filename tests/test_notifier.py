@@ -5,7 +5,7 @@
 
 import json
 
-from competitor_intel.notifier import MAX_CHANGE_ROWS, _build_card, send_feishu
+from competitor_intel.adapters.schedule.notifier import MAX_CHANGE_ROWS, _build_card, send_feishu
 
 BASE = "http://127.0.0.1:8000"
 

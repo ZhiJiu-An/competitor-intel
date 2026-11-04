@@ -23,6 +23,7 @@ CREATE TABLE IF NOT EXISTS snapshots (
   status         TEXT NOT NULL,          -- extracted | extraction_error | skipped
   payload_json   TEXT,                   -- 校验通过的快照 JSON
   error_detail   TEXT,                   -- 校验失败原因，进复核队列
+  origin         TEXT NOT NULL DEFAULT 'scheduled',  -- scheduled | adhoc
   created_at     TEXT DEFAULT (datetime('now'))
 );
 
@@ -57,13 +58,15 @@ CREATE INDEX IF NOT EXISTS ix_runs_created ON runs (created_at DESC);
 _UPSERT = """
 INSERT INTO snapshots
   (competitor, page_url, page_type, snapshot_date, content_hash, status,
-   payload_json, error_detail)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+   payload_json, error_detail, origin)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (competitor, page_url, snapshot_date) DO UPDATE SET
   content_hash = excluded.content_hash,
   status       = excluded.status,
   payload_json = excluded.payload_json,
-  error_detail = excluded.error_detail;
+  error_detail = excluded.error_detail,
+  origin       = excluded.origin
+WHERE snapshots.origin = 'adhoc' OR excluded.origin = 'scheduled';
 """
 
 
@@ -86,6 +89,13 @@ async def init_db(db_path: str | Path) -> None:
         await db.execute("PRAGMA busy_timeout=5000")
         await db.execute("PRAGMA journal_mode=WAL")
         await db.executescript(DDL)
+        # 旧库迁移：补 origin 列（scheduled 为默认，历史数据视同定时采集）
+        async with db.execute("PRAGMA table_info(snapshots)") as cur:
+            columns = {row[1] for row in await cur.fetchall()}
+        if "origin" not in columns:
+            await db.execute(
+                "ALTER TABLE snapshots ADD COLUMN origin TEXT NOT NULL DEFAULT 'scheduled'"
+            )
         await db.commit()
     _INITIALIZED.add(key)
 
@@ -98,13 +108,17 @@ async def save_snapshot(
     content_hash: str,
     status: str,
     error_detail: str | None = None,
+    origin: str = "scheduled",
 ) -> None:
     """写入一条快照记录（extracted / extraction_error / skipped）。
 
-    同一天同一页面重复运行按唯一键覆盖，保证结果可重放。
+    同一天同一页面重复运行按唯一键覆盖；但 scheduled 记录不会被 adhoc 覆盖，
+    保证日报口径只反映定时采集。
     """
     if status not in ("extracted", "extraction_error", "skipped"):
         raise ValueError(f"非法 status: {status}")
+    if origin not in ("scheduled", "adhoc"):
+        raise ValueError(f"非法 origin: {origin}")
     if status == "extracted" and snapshot is None:
         raise ValueError("extracted 状态必须携带 snapshot")
 
@@ -121,6 +135,7 @@ async def save_snapshot(
                 status,
                 payload_json,
                 error_detail,
+                origin,
             ),
         )
         await db.commit()
@@ -183,11 +198,15 @@ async def list_review_queue(db_path: str | Path) -> list[dict]:
 async def snapshots_since(
     db_path: str | Path, since: str
 ) -> list[CompetitorSnapshot]:
-    """查询 since（YYYY-MM-DD，含）以来所有校验通过的快照，用于重生成报告。"""
+    """查询 since（YYYY-MM-DD，含）以来定时采集的快照，用于重生成日报。
+
+    只读 scheduled：临时抓取（adhoc）不进入日报口径。
+    """
     async with aiosqlite.connect(db_path) as db:
         async with db.execute(
             "SELECT payload_json FROM snapshots "
-            "WHERE status = 'extracted' AND snapshot_date >= ? "
+            "WHERE status = 'extracted' AND origin = 'scheduled' "
+            "AND snapshot_date >= ? "
             "ORDER BY competitor, page_url, snapshot_date",
             (since,),
         ) as cur:

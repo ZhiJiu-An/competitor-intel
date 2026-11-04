@@ -2,8 +2,8 @@
 
 import pytest
 
-from competitor_intel.diff import diff_snapshots
-from competitor_intel.models import (
+from competitor_intel.core.diff import diff_snapshots
+from competitor_intel.core.models import (
     CompetitorSnapshot,
     FeatureItem,
     PriceComponent,

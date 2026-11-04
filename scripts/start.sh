@@ -62,7 +62,7 @@ _do_up() {
   if _is_alive api; then
     echo "[api] already running (pid $(_pid api))"
   else
-    nohup $PYTHON -m uvicorn competitor_intel.api:app --host 127.0.0.1 --port 8000 \
+    nohup $PYTHON -m uvicorn competitor_intel.adapters.http.api:app --host 127.0.0.1 --port 8000 \
       > "$LOG_DIR/api.log" 2>&1 &
     echo $! > "$RUN_DIR/api.pid"
     echo "[api] started (pid $!)"
@@ -72,7 +72,7 @@ _do_up() {
   if _is_alive worker; then
     echo "[worker] already running (pid $(_pid worker))"
   else
-    nohup $PYTHON -m celery -A competitor_intel.tasks:celery_app worker \
+    nohup $PYTHON -m celery -A competitor_intel.adapters.schedule.tasks:celery_app worker \
       --loglevel=INFO --pool=solo --concurrency=1 \
       > "$LOG_DIR/worker.log" 2>&1 &
     echo $! > "$RUN_DIR/worker.pid"
@@ -83,7 +83,7 @@ _do_up() {
   if _is_alive beat; then
     echo "[beat] already running (pid $(_pid beat))"
   else
-    nohup $PYTHON -m celery -A competitor_intel.tasks:celery_app beat --loglevel=INFO \
+    nohup $PYTHON -m celery -A competitor_intel.adapters.schedule.tasks:celery_app beat --loglevel=INFO \
       > "$LOG_DIR/beat.log" 2>&1 &
     echo $! > "$RUN_DIR/beat.pid"
     echo "[beat] started (pid $!)"

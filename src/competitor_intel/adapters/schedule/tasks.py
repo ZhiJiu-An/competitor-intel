@@ -39,8 +39,9 @@ celery_app.conf.beat_schedule = {
 def execute_run_task(
     self, run_id: str, config_path: str, competitor: str | None, force: bool
 ) -> dict:
-    from .config import Settings
-    from .service import execute_run
+    from ...core.config import Settings
+    from ...core.orchestrator import execute_run
+    from .notifier import build_notifier
 
     settings = Settings.from_env()
     try:
@@ -51,6 +52,7 @@ def execute_run_task(
                 config_path=config_path,
                 competitor=competitor,
                 force=force,
+                notify=build_notifier(settings),
             )
         )
     except Exception as exc:
@@ -60,8 +62,8 @@ def execute_run_task(
 @celery_app.task(name="competitor_intel.daily_run")
 def daily_run() -> dict:
     """定时入口：幂等创建当日全量 run，再投递执行任务。"""
-    from .config import Settings
-    from .service import enqueue_run
+    from ...core.config import Settings
+    from ...core.orchestrator import enqueue_run
 
     settings = Settings.from_env()
 

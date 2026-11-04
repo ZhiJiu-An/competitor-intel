@@ -13,10 +13,10 @@ import os
 
 import pytest
 
-from competitor_intel import collector
-from competitor_intel.collector import fetch_and_extract
-from competitor_intel.config import Defaults, Settings, Target
-from competitor_intel.store import init_db, latest_snapshot, list_review_queue
+from competitor_intel.core import collector
+from competitor_intel.core.collector import fetch_and_extract
+from competitor_intel.core.config import Defaults, Settings, Target
+from competitor_intel.core.store import init_db, latest_snapshot, list_review_queue
 
 HTML = "<html><body><main>Pro $99/month</main></body></html>"
 

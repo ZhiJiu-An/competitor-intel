@@ -9,12 +9,12 @@ from pathlib import Path
 
 import pytest
 
-from competitor_intel import graph as graph_mod
-from competitor_intel.collector import FetchResult
-from competitor_intel.config import Settings, Target
-from competitor_intel.graph import build_graph
-from competitor_intel.models import CompetitorSnapshot, PricingTier
-from competitor_intel.store import init_db, save_snapshot
+from competitor_intel.core import graph as graph_mod
+from competitor_intel.core.collector import FetchResult
+from competitor_intel.core.config import Settings, Target
+from competitor_intel.core.graph import build_graph
+from competitor_intel.core.models import CompetitorSnapshot, PricingTier
+from competitor_intel.core.store import init_db, save_snapshot
 
 TODAY = date.today().isoformat()
 

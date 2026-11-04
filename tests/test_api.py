@@ -6,10 +6,10 @@
 import pytest
 from fastapi.testclient import TestClient
 
-from competitor_intel.api import create_app
-from competitor_intel.config import Settings, Target
-from competitor_intel.models import CompetitorSnapshot, PricingTier
-from competitor_intel.store import init_db, save_snapshot
+from competitor_intel.adapters.http.api import create_app
+from competitor_intel.core.config import Settings, Target
+from competitor_intel.core.models import CompetitorSnapshot, PricingTier
+from competitor_intel.core.store import init_db, save_snapshot
 
 
 @pytest.fixture
@@ -68,7 +68,7 @@ def test_get_run_and_404(client):
 def test_failed_run_is_redispatched(client, dispatched, settings):
     import asyncio
 
-    from competitor_intel.store import update_run
+    from competitor_intel.core.store import update_run
 
     run_id = client.post("/runs", json={"competitor": "acme"}).json()["run_id"]
     asyncio.run(update_run(settings.db_path, run_id, status="failed", error_summary="llm 401"))
@@ -118,13 +118,15 @@ def test_crawl_endpoint_returns_snapshot_and_report(client, settings, monkeypatc
     """临时抓取：页面不必在 targets.yaml 里，同步返回快照 + 临时报告链接。"""
     import asyncio
 
-    from competitor_intel import service as service_module
-    from competitor_intel.collector import FetchResult
-    from competitor_intel.store import init_db
+    from competitor_intel.core import orchestrator as service_module
+    from competitor_intel.core.collector import FetchResult
+    from competitor_intel.core.store import init_db
 
     asyncio.run(init_db(settings.db_path))
 
-    async def fake_fetch(target, *, force=False, settings=None, defaults=None):
+    async def fake_fetch(
+        target, *, force=False, settings=None, defaults=None, origin="scheduled"
+    ):
         snapshot = CompetitorSnapshot(
             competitor_name=target.competitor,
             page_url=target.url,
@@ -137,6 +139,8 @@ def test_crawl_endpoint_returns_snapshot_and_report(client, settings, monkeypatc
         )
 
     monkeypatch.setattr(service_module, "fetch_and_extract", fake_fetch)
+    # 测试域名不解析，跳过出站校验（netguard 自身有独立单测）
+    monkeypatch.setattr(service_module, "ensure_allowed", lambda url, **kwargs: None)
 
     resp = client.post(
         "/crawl",

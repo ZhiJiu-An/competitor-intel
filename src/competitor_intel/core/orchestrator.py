@@ -11,6 +11,7 @@ import re
 import uuid
 from datetime import date, datetime
 from pathlib import Path
+from typing import Callable
 from urllib.parse import quote, urlparse
 
 import structlog
@@ -19,12 +20,16 @@ from .collector import fetch_and_extract
 from .config import Defaults, Settings, Target, load_config
 from .diff import diff_snapshots
 from .graph import run_pipeline
+from .netguard import ensure_allowed
 from .reporter import render_report
 from .store import create_run, init_db, latest_snapshot, update_run
 
 log = structlog.get_logger(__name__)
 
 DEFAULT_CONFIG = "config/targets.yaml"
+
+#: 推送钩子：由 adapter 注入（core 不 import adapters）
+Notifier = Callable[[dict], None]
 
 
 def idempotency_key(competitor: str | None, day: str | None = None) -> str:
@@ -124,11 +129,13 @@ async def execute_run(
     settings: Settings,
     *,
     run_id: str,
-    config_path: str = DEFAULT_CONFIG,
+    config_path: str | None = None,
     competitor: str | None = None,
     force: bool = False,
+    notify: Notifier | None = None,
 ) -> dict:
     """执行一次采集并回写 run 记录；异常也要落状态，保证失败可见。"""
+    config_path = config_path or str(settings.targets_path)
     await update_run(
         settings.db_path, run_id, status="running", started_at=_now()
     )
@@ -167,17 +174,10 @@ async def execute_run(
         diff.model_dump() for diff in state.get("diffs") or []
     ]
 
-    # 推送（任何异常静默吞掉，绝不影响主流程）
-    if settings.feishu_webhook:
+    # 推送（任何异常静默吞掉，绝不影响主流程）；钩子由 adapter 注入
+    if notify is not None:
         try:
-            from .notifier import send_feishu
-
-            send_feishu(
-                result,
-                webhook=settings.feishu_webhook,
-                keyword=settings.feishu_keyword,
-                report_base_url=settings.report_base_url,
-            )
+            notify(result)
         except Exception as exc:
             log.warning("notify.failed", error=str(exc))
 
@@ -204,9 +204,9 @@ def _slug(name: str) -> str:
     return _SLUG_RE.sub("-", name).strip("-") or "page"
 
 
-def _load_defaults() -> Defaults:
+def _load_defaults(settings: Settings) -> Defaults:
     try:
-        return load_config(DEFAULT_CONFIG).defaults
+        return load_config(settings.targets_path).defaults
     except Exception:  # 配置缺失时用内置默认值，不阻断临时抓取
         return Defaults()
 
@@ -226,6 +226,7 @@ async def crawl_page(
     适合 AI「现在就看一眼这个页面」。结果仍写入快照库，因此天然可追溯。
     """
     competitor = competitor or default_competitor(url)
+    ensure_allowed(url, allow_private=settings.allow_private_networks)
     target = Target(
         competitor=competitor,
         page_type=page_type,
@@ -236,7 +237,11 @@ async def crawl_page(
     # 基线必须在抓取前取：同一天重复抓取会覆盖当天那一条，抓完就取不到旧版了
     baseline = await latest_snapshot(settings.db_path, competitor, url)
     result = await fetch_and_extract(
-        target, force=force, settings=settings, defaults=_load_defaults()
+        target,
+        force=force,
+        settings=settings,
+        defaults=_load_defaults(settings),
+        origin="adhoc",
     )
 
     diffs = []

@@ -13,6 +13,7 @@ import re
 import urllib.request
 from datetime import date
 from pathlib import Path
+from typing import Callable
 from urllib.parse import quote
 
 import structlog
@@ -284,3 +285,19 @@ def send_feishu(
 
     log.info("feishu.sent", status=run_result.get("status"))
     return True
+
+
+def build_notifier(settings) -> Callable[[dict], None] | None:
+    """把 Settings 绑成 core.orchestrator 需要的推送钩子；未配置则返回 None。"""
+    if not settings.feishu_webhook:
+        return None
+
+    def _send(run_result: dict) -> None:
+        send_feishu(
+            run_result,
+            webhook=settings.feishu_webhook,
+            keyword=settings.feishu_keyword,
+            report_base_url=settings.report_base_url,
+        )
+
+    return _send

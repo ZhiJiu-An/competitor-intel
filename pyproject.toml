@@ -26,17 +26,16 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# 只装内核（抓取 + 抽取 + 报告）时不需要任何 extra
+mcp = ["mcp>=2.3,<3"]
+http = ["fastapi>=0.111,<1", "uvicorn>=0.30,<1", "markdown>=3.6,<4"]
+schedule = ["celery>=5.4,<6", "redis>=5,<7"]
+all = ["competitor-intel[mcp,http,schedule]"]
 dev = ["pytest>=8.0", "pytest-asyncio>=0.23", "httpx>=0.27,<1", "ruff>=0.4", "mypy>=1.10"]
-server = [
-  "fastapi>=0.111,<1",
-  "uvicorn>=0.30,<1",
-  "celery>=5.4,<6",
-  "redis>=5,<7",
-  "markdown>=3.6,<4",
-]
 
 [project.scripts]
 ci = "competitor_intel.cli:app"
+competitor-intel-mcp = "competitor_intel.adapters.mcp.server:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

@@ -297,6 +297,7 @@ async def playwright_fallback(
     force: bool = False,
     settings: Settings | None = None,
     defaults: Defaults | None = None,
+    origin: str = "scheduled",
 ) -> FetchResult:
     """兜底路径：Playwright 直取 HTML 后复用同一套抽取策略（最多触发 1 次）。
 
@@ -318,8 +319,13 @@ async def fetch_and_extract(
     force: bool = False,
     settings: Settings | None = None,
     defaults: Defaults | None = None,
+    origin: str = "scheduled",
 ) -> FetchResult:
-    """主路径：robots -> 限速 -> Crawl4AI -> 指纹短路 -> 抽取校验 -> 落库。"""
+    """主路径：robots -> 限速 -> Crawl4AI -> 指纹短路 -> 抽取校验 -> 落库。
+
+    origin 区分 scheduled（定时/日报）与 adhoc（临时看一眼）：
+    同一天同一页面，scheduled 覆盖 adhoc，adhoc 不覆盖 scheduled。
+    """
     settings = settings or Settings.from_env()
     defaults = defaults or Defaults()
 
@@ -334,7 +340,7 @@ async def fetch_and_extract(
     except Exception as exc:
         log.warning("fetch.fallback", url=target.url, error=str(exc), exc_info=True)
         result = await playwright_fallback(
-            target, force=force, settings=settings, defaults=defaults
+            target, force=force, settings=settings, defaults=defaults, origin=origin
         )
 
     # 落库：blocked 不入库（状态机只含 extracted | extraction_error | skipped）
@@ -346,5 +352,6 @@ async def fetch_and_extract(
             content_hash=result.content_hash or "",
             status=result.status,
             error_detail=result.error_detail,
+            origin=origin,
         )
     return result

@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from competitor_intel.fingerprint import compute_fingerprint
+from competitor_intel.core.fingerprint import compute_fingerprint
 
 FIXTURE = Path(__file__).parent / "fixtures" / "sample_pricing.html"
 
