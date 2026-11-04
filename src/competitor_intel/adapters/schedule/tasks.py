@@ -13,7 +13,6 @@ from celery import Celery
 from celery.schedules import crontab
 
 REDIS_URL = os.getenv("REDIS_URL", "redis://127.0.0.1:6379/0")
-CONFIG_PATH = os.getenv("TARGETS_CONFIG", "config/targets.yaml")
 DAILY_HOUR = int(os.getenv("DAILY_CRON_HOUR", "9"))
 
 celery_app = Celery("competitor_intel", broker=REDIS_URL, backend=REDIS_URL)
@@ -66,11 +65,12 @@ def daily_run() -> dict:
     from ...core.orchestrator import enqueue_run
 
     settings = Settings.from_env()
+    config_path = str(settings.targets_path)
 
     async def _enqueue() -> tuple[dict, bool]:
-        return await enqueue_run(settings, config_path=CONFIG_PATH)
+        return await enqueue_run(settings, config_path=config_path)
 
     record, created = asyncio.run(_enqueue())
     if created:
-        execute_run_task.delay(record["id"], CONFIG_PATH, None, False)
+        execute_run_task.delay(record["id"], config_path, None, False)
     return {"run_id": record["id"], "created": created}
