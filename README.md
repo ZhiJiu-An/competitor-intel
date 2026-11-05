@@ -1,5 +1,9 @@
 # competitor-intel
 
+[![CI](https://github.com/ZhiJiu-An/competitor-intel/actions/workflows/ci.yml/badge.svg)](https://github.com/ZhiJiu-An/competitor-intel/actions/workflows/ci.yml)
+![Python](https://img.shields.io/badge/python-3.11%2B-blue)
+![License](https://img.shields.io/badge/license-Apache--2.0-blue)
+
 **Schema 契约驱动的竞品情报系统**：抓取竞品公开的定价页 / 更新日志，用 LLM 抽取成**可校验的结构化对象**，与历史快照做字段级 diff，产出可审计的 Markdown 报告。
 
 同一套内核提供两种用法：

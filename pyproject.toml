@@ -6,8 +6,16 @@ build-backend = "setuptools.build_meta"
 name = "competitor-intel"
 version = "0.1.0"
 description = "竞品情报系统：Schema 契约驱动的竞品采集、结构化抽取与增量 diff 报告管道"
+readme = "README.md"
 license = {text = "Apache-2.0"}
 requires-python = ">=3.11"
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: Apache Software License",
+  "Programming Language :: Python :: 3.11",
+  "Topic :: Software Development :: Libraries :: Python Modules",
+]
 dependencies = [
   "crawl4ai>=0.4,<0.5",
   "litellm>=1.50,<2",
@@ -24,6 +32,10 @@ dependencies = [
   "pyyaml>=6.0,<7",
   "python-dotenv>=1.0,<2",
 ]
+
+[project.urls]
+Repository = "https://github.com/ZhiJiu-An/competitor-intel"
+Issues = "https://github.com/ZhiJiu-An/competitor-intel/issues"
 
 [project.optional-dependencies]
 # 只装内核（抓取 + 抽取 + 报告）时不需要任何 extra
