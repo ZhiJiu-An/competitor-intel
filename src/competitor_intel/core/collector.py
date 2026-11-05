@@ -18,7 +18,7 @@ import urllib.request
 import urllib.robotparser
 from datetime import date
 from pathlib import Path
-from typing import Literal, Optional
+from typing import Literal
 from urllib.parse import urlparse
 
 import structlog
@@ -37,9 +37,9 @@ FetchStatus = Literal["extracted", "extraction_error", "skipped", "blocked"]
 class FetchResult(BaseModel):
     target: Target
     status: FetchStatus
-    content_hash: Optional[str] = None
-    snapshot: Optional[CompetitorSnapshot] = None
-    error_detail: Optional[str] = None
+    content_hash: str | None = None
+    snapshot: CompetitorSnapshot | None = None
+    error_detail: str | None = None
     used_fallback: bool = False
 
 
@@ -261,13 +261,25 @@ def _validate(payload: dict, target: Target) -> CompetitorSnapshot:
 
 
 async def _process_html(
-    target: Target, html: str, *, force: bool, settings: Settings
+    target: Target,
+    html: str,
+    *,
+    force: bool,
+    settings: Settings,
+    origin: str = "scheduled",
 ) -> FetchResult:
     """指纹短路 -> 抽取 -> 校验（纯流程，不写库）。"""
     content_hash = compute_fingerprint(html, target.main_selector)
 
     if not force:
-        last = await latest_hash(settings.db_path, target.competitor, target.url)
+        # 定时路径只跟定时快照比：adhoc 抓过同一页面不能顶替当天的定时采集；
+        # adhoc 自己仍可复用任意 origin 的指纹，省下重复抽取成本。
+        last = await latest_hash(
+            settings.db_path,
+            target.competitor,
+            target.url,
+            origin="scheduled" if origin == "scheduled" else None,
+        )
         if last is not None and last == content_hash:
             log.info("fetch.skipped", url=target.url, competitor=target.competitor)
             return FetchResult(target=target, status="skipped", content_hash=content_hash)
@@ -309,7 +321,9 @@ async def playwright_fallback(
         return FetchResult(target=target, status="blocked")
     await _throttle(defaults.request_interval_s)
     html = await _playwright_html(target, defaults, settings)
-    result = await _process_html(target, html, force=force, settings=settings)
+    result = await _process_html(
+        target, html, force=force, settings=settings, origin=origin
+    )
     return result.model_copy(update={"used_fallback": True})
 
 
@@ -336,7 +350,9 @@ async def fetch_and_extract(
     await _throttle(defaults.request_interval_s)
     try:
         html = await _fetch_html(target, settings, defaults)
-        result = await _process_html(target, html, force=force, settings=settings)
+        result = await _process_html(
+            target, html, force=force, settings=settings, origin=origin
+        )
     except Exception as exc:
         log.warning("fetch.fallback", url=target.url, error=str(exc), exc_info=True)
         result = await playwright_fallback(

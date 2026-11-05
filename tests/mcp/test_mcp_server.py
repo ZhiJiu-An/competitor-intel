@@ -7,7 +7,8 @@ import json
 import pytest
 from mcp.server.mcpserver.exceptions import ResourceError, ToolError
 
-from competitor_intel.adapters.mcp import server
+from competitor_intel.adapters.mcp import bridge, server
+from competitor_intel.core.errors import CiError
 
 
 async def _tools() -> dict:
@@ -160,3 +161,23 @@ async def test_missing_report_raises_resource_error(settings, monkeypatch):
 
     with pytest.raises(ResourceError):
         await server.mcp.read_resource("ci://reports/latest")
+
+
+async def test_bridge_respects_allow_private_networks(settings, monkeypatch):
+    """ALLOW_PRIVATE_NETWORKS 必须同时作用于 MCP 通道，不能只对 HTTP 生效。"""
+    called: list[str] = []
+
+    async def fake_crawl(current, **kwargs):
+        called.append(kwargs["url"])
+        return {"status": "extracted"}
+
+    monkeypatch.setattr(bridge.orchestrator, "crawl_page", fake_crawl)
+
+    settings.allow_private_networks = True
+    await bridge.crawl_page(settings, url="http://127.0.0.1:8000/pricing")
+    assert called == ["http://127.0.0.1:8000/pricing"]
+
+    settings.allow_private_networks = False
+    with pytest.raises(CiError) as excinfo:
+        await bridge.crawl_page(settings, url="http://127.0.0.1:8000/pricing")
+    assert excinfo.value.code == "BLOCKED"

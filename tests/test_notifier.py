@@ -88,6 +88,17 @@ def test_card_truncates_long_change_list():
     assert "还有 4 条未展示" in json.dumps(card, ensure_ascii=False)
 
 
+def test_report_button_keeps_adhoc_subdirectory():
+    """adhoc 报告在 reports/adhoc/ 下，按钮不能只拼文件名。"""
+    card = _build_card(
+        _run_result(report_path="data/reports/adhoc/2026-11-04-acme.md"),
+        report_base_url=BASE,
+        report_root="data/reports",
+    )
+    actions = [e for e in card["elements"] if e.get("tag") == "action"]
+    assert actions[0]["actions"][0]["url"] == f"{BASE}/reports/adhoc/2026-11-04-acme.md"
+
+
 def test_card_omits_button_without_report_path_or_base_url():
     no_path = _build_card(_run_result(report_path=None), report_base_url=BASE)
     assert not [e for e in no_path["elements"] if e.get("tag") == "action"]
@@ -105,6 +116,7 @@ def _notifier_settings(**overrides) -> SimpleNamespace:
         "feishu_webhook": "https://open.feishu.cn/open-apis/bot/v2/hook/test",
         "feishu_keyword": "竞品分析",
         "report_base_url": BASE,
+        "report_dir": "data/reports",
         "feishu_notify_mode": "changes",
     }
     values.update(overrides)
@@ -136,6 +148,17 @@ def test_changes_mode_sends_only_when_differences_exist(monkeypatch):
     with_changes = _run_result()
     notify(with_changes)
     assert sent == [with_changes]
+
+
+def test_changes_mode_still_alerts_on_failure(monkeypatch):
+    """失败/部分成功不属于「无变化」，不能静音。"""
+    sent = _spy_send(monkeypatch)
+    notify = notifier.build_notifier(_notifier_settings())
+
+    failed = {**_run_result(), "differences": [], "status": "failed", "errors": 1}
+    notify(failed)
+
+    assert sent == [failed]
 
 
 def test_always_mode_sends_even_without_changes(monkeypatch):

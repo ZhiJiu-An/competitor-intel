@@ -9,9 +9,10 @@
 import json
 import re
 import uuid
+from collections.abc import Callable, Mapping
 from datetime import date, datetime
 from pathlib import Path
-from typing import Callable
+from typing import Any
 from urllib.parse import quote, urlparse
 
 import structlog
@@ -36,8 +37,8 @@ def idempotency_key(competitor: str | None, day: str | None = None) -> str:
     return f"{day or date.today().isoformat()}:{competitor or 'all'}"
 
 
-def summarize(state: dict) -> dict:
-    """从 LangGraph 最终状态计算计数与 MVP §10 指标。
+def summarize(state: Mapping[str, Any]) -> dict[str, Any]:
+    """从 LangGraph 最终状态计算计数与产品指标。
 
     指标口径：分母是该批次实际处理的目标数（results 长度），
     不是配置总数——失败在 fetch 阶段就退出的目标不计入 skip_rate。
@@ -101,6 +102,8 @@ async def enqueue_run(
 
     同日同竞品幂等复用；但上一轮若为 failed（如密钥过期、全站超时），
     允许当天重试：把记录复位为 queued 并重新投递，run_id 保持不变。
+    force=True 时即使上一轮已结束（succeeded / partial）也重跑，用于
+    「我已经改过配置/换了 key，再跑一次」；正在运行的 run 不会被抢占。
     """
     await init_db(settings.db_path)
     record, created = await create_run(
@@ -109,7 +112,11 @@ async def enqueue_run(
         idempotency_key=idempotency_key(competitor),
         competitor=competitor,
     )
-    if not created and record["status"] == "failed":
+    if (
+        not created
+        and record["status"] in ("succeeded", "partial", "failed")
+        and (force or record["status"] == "failed")
+    ):
         await update_run(
             settings.db_path,
             record["id"],
@@ -227,6 +234,8 @@ async def crawl_page(
     """
     competitor = competitor or default_competitor(url)
     ensure_allowed(url, allow_private=settings.allow_private_networks)
+    # 临时抓取可能发生在从未执行过 init-db 的新环境，先建表再查基线
+    await init_db(settings.db_path)
     target = Target(
         competitor=competitor,
         page_type=page_type,
@@ -250,10 +259,20 @@ async def crawl_page(
         if diff.changed:
             diffs.append(diff)
 
+    # 指纹未变时上游不会返回快照；「眼睛」场景下这等于没数据，
+    # 因此回落到基线，至少让调用方拿到结构化内容。
+    snapshot = result.snapshot
+    note: str | None = None
+    if result.status == "skipped" and baseline is not None:
+        snapshot = baseline
+        note = "页面内容与上次一致（指纹未变），返回最近一次快照；需要重新抽取请传 force=true"
+
     report: dict | None = None
     if result.snapshot is not None:
+        # page_type 来自外部入参，必须 slug，避免 "../" 把报告写出 report_dir
         rel = (
-            f"{ADHOC_SUBDIR}/{date.today().isoformat()}-{_slug(competitor)}-{page_type}.md"
+            f"{ADHOC_SUBDIR}/{date.today().isoformat()}-"
+            f"{_slug(competitor)}-{_slug(page_type)}.md"
         )
         path = render_report(
             [result.snapshot],
@@ -273,13 +292,15 @@ async def crawl_page(
         "page_type": page_type,
         "status": result.status,
         "used_fallback": result.used_fallback,
-        "snapshot_date": result.snapshot.snapshot_date if result.snapshot else None,
+        "snapshot_date": snapshot.snapshot_date if snapshot else None,
         "baseline_date": baseline.snapshot_date if baseline else None,
-        "snapshot": result.snapshot.model_dump(mode="json") if result.snapshot else None,
+        "snapshot": snapshot.model_dump(mode="json") if snapshot else None,
         "changes": [change.model_dump() for diff in diffs for change in diff.changes],
         "error_detail": result.error_detail,
         "report": report,
     }
     if result.status == "blocked":
         response["note"] = "robots.txt 不允许抓取该页面，未写入数据库"
+    elif note:
+        response["note"] = note
     return response

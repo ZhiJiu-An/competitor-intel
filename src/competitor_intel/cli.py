@@ -7,7 +7,6 @@
 """
 
 import asyncio
-from typing import Optional
 
 import typer
 
@@ -21,7 +20,7 @@ def _settings():
 
 
 @app.command("init-db")
-def init_db(db_path: Optional[str] = typer.Option(None, help="SQLite 路径")) -> None:
+def init_db(db_path: str | None = typer.Option(None, help="SQLite 路径")) -> None:
     """初始化数据库。"""
     from .core.store import init_db as _init_db
 
@@ -32,8 +31,8 @@ def init_db(db_path: Optional[str] = typer.Option(None, help="SQLite 路径")) -
 
 @app.command("run")
 def run(
-    config: Optional[str] = typer.Option(None, help="站点配置"),
-    competitor: Optional[str] = typer.Option(None, help="只跑指定竞品"),
+    config: str | None = typer.Option(None, help="站点配置"),
+    competitor: str | None = typer.Option(None, help="只跑指定竞品"),
     force: bool = typer.Option(False, help="强制忽略指纹"),
 ) -> None:
     """单次全量运行（仍会走指纹短路）。"""
@@ -56,8 +55,8 @@ def run(
 
 @app.command("review")
 def review(
-    config: Optional[str] = typer.Option(None, help="站点配置"),
-    db_path: Optional[str] = typer.Option(None, help="SQLite 路径"),
+    config: str | None = typer.Option(None, help="站点配置"),
+    db_path: str | None = typer.Option(None, help="SQLite 路径"),
     retry_failed: bool = typer.Option(False, help="重跑复核队列中的失败记录"),
 ) -> None:
     """查看 / 重跑人工复核队列。"""
@@ -108,8 +107,8 @@ def review(
 @app.command("report")
 def report(
     since: str = typer.Option(..., help="起始日期 YYYY-MM-DD"),
-    out: Optional[str] = typer.Option(None, help="输出路径"),
-    db_path: Optional[str] = typer.Option(None, help="SQLite 路径"),
+    out: str | None = typer.Option(None, help="输出路径"),
+    db_path: str | None = typer.Option(None, help="SQLite 路径"),
 ) -> None:
     """从快照重新生成 Markdown 报告。"""
     from .core.diff import diff_snapshots

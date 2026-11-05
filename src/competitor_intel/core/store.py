@@ -5,7 +5,6 @@
 """
 
 from pathlib import Path
-from typing import Optional
 
 import aiosqlite
 
@@ -103,7 +102,7 @@ async def init_db(db_path: str | Path) -> None:
 async def save_snapshot(
     db_path: str | Path,
     target: Target,
-    snapshot: Optional[CompetitorSnapshot],
+    snapshot: CompetitorSnapshot | None,
     *,
     content_hash: str,
     status: str,
@@ -147,7 +146,7 @@ async def latest_snapshot(
     page_url: str,
     *,
     before: str | None = None,
-) -> Optional[CompetitorSnapshot]:
+) -> CompetitorSnapshot | None:
     """查询某页面最近一次校验通过的快照，作为 diff 基线。
 
     before（YYYY-MM-DD，不含）用于排除当天刚写入的快照。
@@ -171,16 +170,29 @@ async def latest_snapshot(
 
 
 async def latest_hash(
-    db_path: str | Path, competitor: str, page_url: str
-) -> Optional[str]:
-    """最近一次校验通过快照的内容指纹，用于增量短路。"""
+    db_path: str | Path,
+    competitor: str,
+    page_url: str,
+    *,
+    origin: str | None = None,
+) -> str | None:
+    """最近一次校验通过快照的内容指纹，用于增量短路。
+
+    origin='scheduled' 时只看定时采集：同一天先做过 adhoc 临时抓取，
+    不能让定时 run 误以为「已经采过了」而跳过，否则日报会缺页。
+    """
+    sql = (
+        "SELECT content_hash FROM snapshots "
+        "WHERE competitor = ? AND page_url = ? AND status = 'extracted'"
+    )
+    params: list = [competitor, page_url]
+    if origin is not None:
+        sql += " AND origin = ?"
+        params.append(origin)
+    sql += " ORDER BY snapshot_date DESC LIMIT 1"
+
     async with aiosqlite.connect(db_path) as db:
-        async with db.execute(
-            "SELECT content_hash FROM snapshots "
-            "WHERE competitor = ? AND page_url = ? AND status = 'extracted' "
-            "ORDER BY snapshot_date DESC LIMIT 1",
-            (competitor, page_url),
-        ) as cur:
+        async with db.execute(sql, params) as cur:
             row = await cur.fetchone()
     return row[0] if row else None
 
@@ -255,7 +267,7 @@ async def create_run(
     return record, record["id"] == run_id
 
 
-async def get_run(db_path: str | Path, run_id: str) -> Optional[dict]:
+async def get_run(db_path: str | Path, run_id: str) -> dict | None:
     async with aiosqlite.connect(db_path) as db:
         db.row_factory = aiosqlite.Row
         async with db.execute("SELECT * FROM runs WHERE id = ?", (run_id,)) as cur:

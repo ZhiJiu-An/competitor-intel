@@ -209,6 +209,46 @@ def test_report_direct_link_for_feishu_button(client, settings):
     assert client.get("/reports/evil.txt").status_code == 400
 
 
+def test_crawl_returns_504_when_page_takes_too_long(client, settings, monkeypatch):
+    """浏览器/LLM 卡死时请求不能无限挂着。"""
+    import asyncio
+
+    from competitor_intel.adapters.http import api
+
+    async def slow(*args, **kwargs):
+        await asyncio.sleep(5)
+
+    monkeypatch.setattr(api, "crawl_page", slow)
+    settings.crawl_timeout_s = 0.05
+
+    resp = client.post("/crawl", json={"url": "https://acme.example/pricing"})
+
+    assert resp.status_code == 504
+    assert "超时" in resp.json()["detail"]
+
+
+def test_report_page_escapes_untrusted_html_and_links(client, settings):
+    """报告正文来自竞品页面 + LLM，渲染时必须按不可信文本处理。"""
+    from pathlib import Path
+
+    report_dir = Path(settings.report_dir)
+    report_dir.mkdir(parents=True, exist_ok=True)
+    (report_dir / "untrusted.md").write_text(
+        "# 报告\n\n"
+        "<script>alert(1)</script>\n\n"
+        '<img src=x onerror="alert(2)">\n\n'
+        "[恶意链接](javascript:alert(3))\n",
+        encoding="utf-8",
+    )
+
+    resp = client.get("/reports/untrusted.md")
+    assert resp.status_code == 200
+    assert "<script>alert(1)</script>" not in resp.text
+    assert "<img src=x" not in resp.text
+    assert "&lt;script&gt;" in resp.text
+    assert 'href="javascript:' not in resp.text
+
+
 def test_api_token_required_when_configured(settings, dispatched):
     settings.api_token = "s3cret"
     app = create_app(settings, dispatcher=lambda *a: dispatched.append(a))

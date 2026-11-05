@@ -59,8 +59,11 @@ MCP 工具不要抛裸异常或返回空列表。统一抛 `core.errors.CiError(
 ```bash
 pytest -q
 ruff check .
+mypy src
 python scripts/smoke_e2e.py     # 改了采集 / 报告链路时
 ```
+
+CI（`.github/workflows/ci.yml`）跑的是同一组门禁：`ruff` + `mypy` + `pytest`。
 
 ## 提交信息
 

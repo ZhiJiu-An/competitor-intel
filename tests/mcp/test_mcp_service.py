@@ -72,7 +72,7 @@ async def test_diff_without_baseline_explains_why(settings):
 
 
 async def test_list_changes_covers_all_competitors_in_one_call(settings):
-    result = await service.list_changes(settings, since="2026-10-20")
+    result = await service.list_changes(settings, since="2026-10-21")
 
     assert result["count"] == 2
     by_competitor = {item["competitor"]: item for item in result["items"]}
@@ -81,11 +81,21 @@ async def test_list_changes_covers_all_competitors_in_one_call(settings):
     assert by_competitor["beta"]["changes"][0]["field"] == "pricing_tiers[Pro].amount"
 
 
+async def test_list_changes_counts_changes_on_the_since_date(settings):
+    """since 是窗口起点（含）：since=最新快照当天时，要能看到当天的变化。"""
+    result = await service.list_changes(settings, since="2026-10-27")
+
+    assert {item["status"] for item in result["items"]} == {"changed"}
+    acme = next(item for item in result["items"] if item["competitor"] == "acme")
+    assert acme["baseline_date"] == "2026-10-20"
+
+
 async def test_list_changes_hides_unchanged_pages_by_default(settings):
-    assert (await service.list_changes(settings, since="2026-10-27"))["count"] == 0
+    # since 晚于最新快照：基线就是最新快照自身，没有变化
+    assert (await service.list_changes(settings, since="2026-10-28"))["count"] == 0
 
     full = await service.list_changes(
-        settings, since="2026-10-27", include_unchanged=True
+        settings, since="2026-10-28", include_unchanged=True
     )
     assert full["count"] == 2
     assert {item["status"] for item in full["items"]} == {"unchanged"}

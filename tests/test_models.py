@@ -3,6 +3,7 @@
 import pytest
 from pydantic import ValidationError
 
+from competitor_intel.core.config import PageEntry
 from competitor_intel.core.models import CompetitorSnapshot, FeatureItem, PricingTier
 
 
@@ -26,3 +27,11 @@ def test_snapshot_requires_core_fields():
 def test_pricing_tier_amount_must_be_numeric():
     with pytest.raises(ValidationError):
         PricingTier(name="Pro", amount="99")  # type: ignore[arg-type]
+
+
+def test_targets_url_must_be_http():
+    """targets.yaml 的 URL 会直接进浏览器，非 http(s) 协议要在加载期拒掉。"""
+    with pytest.raises(ValidationError):
+        PageEntry(type="pricing", url="file:///etc/passwd", main_selector="body")
+
+    assert PageEntry(type="pricing", url="https://acme.example/pricing", main_selector="body")

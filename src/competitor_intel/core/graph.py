@@ -9,7 +9,8 @@
 
 import inspect
 from datetime import date
-from typing import Optional, TypedDict
+from pathlib import Path
+from typing import TypedDict
 
 import structlog
 from langgraph.graph import END, StateGraph
@@ -28,14 +29,14 @@ log = structlog.get_logger(__name__)
 
 class PipelineState(TypedDict, total=False):
     config_path: str
-    competitor_filter: Optional[str]
+    competitor_filter: str | None
     force: bool
     defaults: Defaults
     targets: list[Target]
     results: list[FetchResult]
     diffs: list[DiffResult]
     analyses: list[str]
-    report_path: Optional[str]
+    report_path: str | None
     skipped: list[str]
     errors: list[str]  # 重试后仍失败的目标
     blocked: list[str]  # 合规拦截
@@ -159,12 +160,12 @@ def build_graph(settings: Settings, *, checkpointer=None):
     return g.compile(checkpointer=checkpointer)
 
 
-async def _make_checkpointer(db_path: str):
+async def _make_checkpointer(db_path: str | Path):
     """直接构造 AsyncSqliteSaver，规避各版本 from_conn_string 的签名漂移。"""
     import aiosqlite
     from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
-    conn = aiosqlite.connect(db_path)
+    conn = aiosqlite.connect(str(db_path))
     saver = AsyncSqliteSaver(conn)
     setup = getattr(saver, "setup", None)
     if setup is not None:

@@ -73,7 +73,11 @@ async def trigger_run(
             _execute(settings, run_id, competitor=competitor, force=force)
         )
         _TASKS[run_id] = task
-        task.add_done_callback(lambda _task, key=run_id: _TASKS.pop(key, None))
+
+        def _forget(_task: asyncio.Task, key: str = run_id) -> None:
+            _TASKS.pop(key, None)
+
+        task.add_done_callback(_forget)
     return {
         "run_id": run_id,
         "status": record["status"],
@@ -90,7 +94,7 @@ async def wait_for_run(
     if task is not None:
         try:
             await asyncio.wait_for(asyncio.shield(task), timeout=timeout)
-        except asyncio.TimeoutError as exc:
+        except TimeoutError as exc:
             raise CiError(
                 "TIMEOUT",
                 f"{timeout:.0f}s 内未跑完采集",
@@ -122,9 +126,9 @@ async def wait_for_run(
         await asyncio.sleep(1)
 
 
-def _check_url(url: str) -> None:
+def _check_url(url: str, settings: Settings) -> None:
     """http/https 与内网限制统一由 core.netguard 判定。"""
-    ensure_allowed(url)
+    ensure_allowed(url, allow_private=settings.allow_private_networks)
 
 
 async def crawl_page(
@@ -136,7 +140,7 @@ async def crawl_page(
     main_selector: str | None = None,
     force: bool = False,
 ) -> dict:
-    _check_url(url)
+    _check_url(url, settings)
     try:
         result = await asyncio.wait_for(
             orchestrator.crawl_page(
@@ -149,7 +153,7 @@ async def crawl_page(
             ),
             timeout=settings.crawl_timeout_s,
         )
-    except asyncio.TimeoutError as exc:
+    except TimeoutError as exc:
         raise CiError(
             "TIMEOUT",
             f"{settings.crawl_timeout_s:.0f}s 内未抓完 {url}",

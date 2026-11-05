@@ -8,10 +8,12 @@ POST /crawl（临时抓取任意页面）、GET /reports/{name}（报告页）�
 - 鉴权可选：配置 API_TOKEN 后要求 X-API-Token，未配置时默认仅监听本机。
 """
 
+import asyncio
+import html
 import json
 import re
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable, Optional
 
 import markdown
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
@@ -22,7 +24,21 @@ from ...core.config import Settings
 from ...core.orchestrator import crawl_page, enqueue_run
 from ...core.store import get_run, init_db, list_snapshot_records
 
-Dispatcher = Callable[[str, str, Optional[str], bool], None]
+Dispatcher = Callable[[str, str, str | None, bool], None]
+
+#: 报告正文来自竞品页面 + LLM，一律按不可信文本处理：先转义 HTML，
+#: 再把 Markdown 语法里的危险协议拍平（html.escape 管不到链接目标）。
+_DANGEROUS_URL_RE = re.compile(
+    r'(href|src)="\s*(?:javascript|vbscript|data):[^"]*"', re.IGNORECASE
+)
+
+
+def _render_report_html(text: str) -> str:
+    body = markdown.markdown(
+        html.escape(text, quote=False), extensions=["tables", "fenced_code", "sane_lists"]
+    )
+    return _DANGEROUS_URL_RE.sub(r'\1="#"', body)
+
 
 # 报告页模板：卡片按钮在浏览器打开，裸 Markdown 没法读，这里渲染成简洁 HTML。
 _REPORT_PAGE = """<!doctype html>
@@ -80,38 +96,38 @@ __BODY__
 
 
 class RunRequest(BaseModel):
-    competitor: Optional[str] = None
+    competitor: str | None = None
     force: bool = False
-    config: Optional[str] = None
+    config: str | None = None
 
 
 class CrawlRequest(BaseModel):
     """临时抓取：页面不在 targets.yaml 里也能抓。"""
 
     url: HttpUrl
-    competitor: Optional[str] = None
+    competitor: str | None = None
     page_type: str = "pricing"
-    main_selector: Optional[str] = None
+    main_selector: str | None = None
     force: bool = False
 
 
-def _default_dispatch(run_id: str, config_path: str, competitor: Optional[str], force: bool) -> None:
+def _default_dispatch(run_id: str, config_path: str, competitor: str | None, force: bool) -> None:
     from ..schedule.tasks import execute_run_task
 
     execute_run_task.delay(run_id, config_path, competitor, force)
 
 
 def create_app(
-    settings: Optional[Settings] = None,
+    settings: Settings | None = None,
     *,
-    dispatcher: Optional[Dispatcher] = None,
+    dispatcher: Dispatcher | None = None,
 ) -> FastAPI:
     settings = settings or Settings.from_env()
     dispatch = dispatcher or _default_dispatch
 
     app = FastAPI(title="竞品情报服务", version="0.2")
 
-    def _auth(x_api_token: Optional[str] = Header(default=None)) -> None:
+    def _auth(x_api_token: str | None = Header(default=None)) -> None:
         if settings.api_token and x_api_token != settings.api_token:
             raise HTTPException(status_code=401, detail="invalid token")
 
@@ -159,21 +175,34 @@ def create_app(
         给 MCP 的「眼睛」用：页面不必写进 targets.yaml，抓完直接返回
         结构化快照 + 与上次的字段级变化 + 临时报告链接。
         同步是有意的 —— 调用方要的就是这一次的结果，不需要轮询。
+        超时上限与 MCP 通道一致，避免浏览器/LLM 卡死把请求挂住。
         """
-        return await crawl_page(
-            settings,
-            url=str(body.url),
-            competitor=body.competitor,
-            page_type=body.page_type,
-            main_selector=body.main_selector,
-            force=body.force,
-        )
+        try:
+            return await asyncio.wait_for(
+                crawl_page(
+                    settings,
+                    url=str(body.url),
+                    competitor=body.competitor,
+                    page_type=body.page_type,
+                    main_selector=body.main_selector,
+                    force=body.force,
+                ),
+                timeout=settings.crawl_timeout_s,
+            )
+        except TimeoutError as exc:
+            raise HTTPException(
+                status_code=504,
+                detail=(
+                    f"抓取超时（>{settings.crawl_timeout_s:.0f}s），"
+                    "可稍后重试，或调大 CI_CRAWL_TIMEOUT_S"
+                ),
+            ) from exc
 
     @app.get("/snapshots", dependencies=[Depends(_auth)])
     async def read_snapshots(
-        competitor: Optional[str] = None,
-        since: Optional[str] = None,
-        until: Optional[str] = None,
+        competitor: str | None = None,
+        since: str | None = None,
+        until: str | None = None,
         limit: int = Query(default=200, ge=1, le=1000),
     ) -> dict:
         rows = await list_snapshot_records(
@@ -217,7 +246,7 @@ def create_app(
         if raw:
             return PlainTextResponse(text, media_type="text/markdown; charset=utf-8")
 
-        body = markdown.markdown(text, extensions=["tables", "fenced_code", "sane_lists"])
+        body = _render_report_html(text)
         return HTMLResponse(
             _REPORT_PAGE.replace("__TITLE__", f"竞品报告 {name}").replace("__BODY__", body)
         )

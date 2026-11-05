@@ -11,9 +11,9 @@
 import json
 import re
 import urllib.request
+from collections.abc import Callable
 from datetime import date
 from pathlib import Path
-from typing import Callable
 from urllib.parse import quote
 
 import structlog
@@ -139,11 +139,26 @@ def _change_rows(differences: list[dict]) -> tuple[list[dict], int]:
     return rows, max(total - len(rows), 0)
 
 
-def _report_url(report_path: str | None, base_url: str | None) -> str | None:
+def _report_url(
+    report_path: str | None,
+    base_url: str | None,
+    report_root: str | Path | None = None,
+) -> str | None:
     if not report_path or not base_url:
         return None
-    name = Path(str(report_path)).name
-    return f"{base_url.rstrip('/')}/reports/{quote(name)}"
+    path = Path(str(report_path))
+    # adhoc 报告在 reports/adhoc/ 下，只取文件名会让按钮 404
+    rel = Path(path.name)
+    if report_root:
+        root = Path(report_root)
+        try:
+            rel = path.relative_to(root)
+        except ValueError:
+            try:
+                rel = path.resolve().relative_to(root.resolve())
+            except ValueError:
+                pass
+    return f"{base_url.rstrip('/')}/reports/{quote(rel.as_posix())}"
 
 
 def _build_card(
@@ -151,6 +166,7 @@ def _build_card(
     *,
     keyword: str = DEFAULT_KEYWORD,
     report_base_url: str | None = None,
+    report_root: str | Path | None = None,
 ) -> dict:
     """把 run 摘要渲染成飞书 interactive card。
 
@@ -212,7 +228,7 @@ def _build_card(
             }
         )
 
-    url = _report_url(run_result.get("report_path"), report_base_url)
+    url = _report_url(run_result.get("report_path"), report_base_url, report_root)
     if url:
         elements.append(
             {
@@ -248,6 +264,7 @@ def send_feishu(
     webhook: str,
     keyword: str = DEFAULT_KEYWORD,
     report_base_url: str | None = None,
+    report_root: str | Path | None = None,
 ) -> bool:
     """发送飞书卡片，任何错误返回 False 并写 warning，**绝不抛异常**。
 
@@ -259,7 +276,10 @@ def send_feishu(
     payload = {
         "msg_type": "interactive",
         "card": _build_card(
-            run_result, keyword=keyword, report_base_url=report_base_url
+            run_result,
+            keyword=keyword,
+            report_base_url=report_base_url,
+            report_root=report_root,
         ),
     }
 
@@ -291,7 +311,8 @@ def build_notifier(settings) -> Callable[[dict], None] | None:
     """把 Settings 绑成 core.orchestrator 需要的推送钩子；未配置则返回 None。
 
     FEISHU_NOTIFY_MODE 决定推送频率：
-    - changes（默认）：只有出现字段级变化才推，避免每天刷屏；
+    - changes（默认）：无变化且 run 正常才静音，避免每天刷屏；
+      failed / partial 仍然推送，故障不能被静音；
     - always：每次 run 都推，适合想每天看一次健康度的人。
     """
     if not settings.feishu_webhook:
@@ -300,7 +321,9 @@ def build_notifier(settings) -> Callable[[dict], None] | None:
     mode = getattr(settings, "feishu_notify_mode", "changes")
 
     def _send(run_result: dict) -> None:
-        if mode == "changes" and not run_result.get("differences"):
+        # 无变化且一切正常才静音；采集失败/部分失败属于「需要人看」，必须推
+        quiet = not run_result.get("differences") and run_result.get("status") == "succeeded"
+        if mode == "changes" and quiet:
             log.info("feishu.skipped", reason="no_changes", run_id=run_result.get("run_id"))
             return
         send_feishu(
@@ -308,6 +331,7 @@ def build_notifier(settings) -> Callable[[dict], None] | None:
             webhook=settings.feishu_webhook,
             keyword=settings.feishu_keyword,
             report_base_url=settings.report_base_url,
+            report_root=settings.report_dir,
         )
 
     return _send

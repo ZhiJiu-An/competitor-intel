@@ -16,7 +16,7 @@ from typing import Literal
 
 import yaml
 from dotenv import load_dotenv
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class Defaults(BaseModel):
@@ -31,6 +31,14 @@ class PageEntry(BaseModel):
     url: str
     main_selector: str = Field(description="指纹容器 CSS 选择器")
     pricing_selector: str | None = None
+
+    @field_validator("url")
+    @classmethod
+    def _only_http(cls, value: str) -> str:
+        # 配置里的 URL 直接喂给浏览器，file:// / data: 之类不能进
+        if not value.startswith(("http://", "https://")):
+            raise ValueError("只支持 http/https URL")
+        return value
 
 
 class CompetitorEntry(BaseModel):
@@ -115,6 +123,11 @@ class Settings(BaseModel):
             raw = Path(os.getenv(name, default)).expanduser()
             return raw if raw.is_absolute() else home / raw
 
+        raw_mode = os.getenv("FEISHU_NOTIFY_MODE", "changes").strip().lower()
+        notify_mode: Literal["changes", "always"] = (
+            "always" if raw_mode == "always" else "changes"
+        )
+
         return cls(
             home=home,
             llm_api_key=os.getenv("LLM_API_KEY", ""),
@@ -127,7 +140,7 @@ class Settings(BaseModel):
             api_token=os.getenv("API_TOKEN", ""),
             feishu_webhook=os.getenv("FEISHU_WEBHOOK", ""),
             feishu_keyword=os.getenv("FEISHU_KEYWORD", "竞品分析"),
-            feishu_notify_mode=os.getenv("FEISHU_NOTIFY_MODE", "changes").strip().lower(),
+            feishu_notify_mode=notify_mode,
             report_base_url=os.getenv("REPORT_BASE_URL", "http://127.0.0.1:8000"),
             browser_channel=os.getenv("CRAWLER_BROWSER_CHANNEL", "chromium"),
             timeout_s=float(os.getenv("CI_API_TIMEOUT_S", "20")),

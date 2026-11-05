@@ -204,12 +204,10 @@ async def list_changes(
     items: list[dict] = []
     for current in current_rows:
         page = {"competitor": current["competitor"], "page_url": current["page_url"]}
-        baseline = (
-            await store.latest_on_or_before(settings, **page, day=since)
-            if since
-            else await store.snapshot_before(
-                settings, **page, before=current["snapshot_date"]
-            )
+        # 基线取窗口起点「之前」的一条：since 当天的变化也属于窗口内，
+        # 否则 since=今天时永远看不到今天改了什么。
+        baseline = await store.snapshot_before(
+            settings, **page, before=since or current["snapshot_date"]
         )
 
         changes: list[dict] = []

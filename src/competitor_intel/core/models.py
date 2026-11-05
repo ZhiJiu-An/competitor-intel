@@ -4,7 +4,6 @@ Schema 是抽取指令与校验标准的双重载体（TDD 5.1）。
 本模块最先写、最该反复打磨：字段粒度决定 diff 的可读性。
 """
 
-from typing import Optional
 
 from pydantic import BaseModel, Field, StrictFloat
 
@@ -19,7 +18,7 @@ class PriceComponent(BaseModel):
     unit: str = Field(description="计费单位，如 1M tokens / 席位每月 / 千次调用")
     amount: StrictFloat = Field(description="该维度的数值价格")
     currency: str = Field(description="ISO 币种代码，如 CNY / USD")
-    condition: Optional[str] = Field(
+    condition: str | None = Field(
         None, description="适用条件，如 缓存未命中·高峰 / 年付 / 超出配额后"
     )
 
@@ -27,15 +26,15 @@ class PriceComponent(BaseModel):
 class PricingTier(BaseModel):
     name: str = Field(description="套餐名称，原样保留，如 Free / Pro / Enterprise")
     # 严格数值：拒绝 "99" 这类字符串，防止 LLM 输出被静默强转（int 仍接受）
-    amount: Optional[StrictFloat] = Field(None, description="数值价格；免费或面议填 null")
-    currency: Optional[str] = Field(None, description="ISO 币种代码，如 CNY / USD")
-    billing_period: Optional[str] = Field(
+    amount: StrictFloat | None = Field(None, description="数值价格；免费或面议填 null")
+    currency: str | None = Field(None, description="ISO 币种代码，如 CNY / USD")
+    billing_period: str | None = Field(
         None, description="monthly / yearly / one_time / custom"
     )
     key_limits: list[str] = Field(
         default_factory=list, description="核心配额，如 5GB 存储、3 个席位"
     )
-    pricing_model: Optional[str] = Field(
+    pricing_model: str | None = Field(
         None,
         description="subscription（订阅制）/ usage_based（按量计费）/ one_time / custom",
     )
@@ -48,7 +47,7 @@ class PricingTier(BaseModel):
 class FeatureItem(BaseModel):
     name: str = Field(description="功能点名称，简短名词短语")
     description: str = Field(description="一句话说明该功能做什么")
-    category: Optional[str] = Field(None, description="功能归类，如 AI / 协作 / 安全")
+    category: str | None = Field(None, description="功能归类，如 AI / 协作 / 安全")
 
 
 class CompetitorSnapshot(BaseModel):
@@ -58,6 +57,6 @@ class CompetitorSnapshot(BaseModel):
     page_type: str = Field(description="pricing / changelog")
     pricing_tiers: list[PricingTier] = Field(default_factory=list)
     feature_items: list[FeatureItem] = Field(default_factory=list)
-    target_user_note: Optional[str] = Field(
+    target_user_note: str | None = Field(
         None, description="目标用户描述，从页面原文归纳"
     )

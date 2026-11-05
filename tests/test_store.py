@@ -54,6 +54,23 @@ async def test_roundtrip_and_latest(db_path, target):
     assert await latest_hash(db_path, "acme", target.url) == "h2"
 
 
+async def test_latest_hash_can_be_scoped_to_scheduled(db_path, target):
+    """同一天先做过 adhoc，不能让定时 run 误以为已采过而跳过。"""
+    await init_db(db_path)
+    await save_snapshot(
+        db_path, target, _snap("2026-11-01"),
+        content_hash="h-adhoc", status="extracted", origin="adhoc",
+    )
+    assert await latest_hash(db_path, "acme", target.url) == "h-adhoc"
+    assert await latest_hash(db_path, "acme", target.url, origin="scheduled") is None
+
+    await save_snapshot(
+        db_path, target, _snap("2026-11-01"),
+        content_hash="h-sched", status="extracted", origin="scheduled",
+    )
+    assert await latest_hash(db_path, "acme", target.url, origin="scheduled") == "h-sched"
+
+
 async def test_same_day_upsert(db_path, target):
     await init_db(db_path)
     await save_snapshot(db_path, target, _snap("2026-11-01"), content_hash="h1", status="extracted")
