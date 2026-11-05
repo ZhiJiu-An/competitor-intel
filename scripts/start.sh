@@ -38,12 +38,44 @@ _is_alive() {
   [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null
 }
 
+# redis-cli 与 redis-server 同目录；PATH 里通常没有，需从 REDIS_BIN 推导
+_redis_cli() {
+  if [[ -n "${REDIS_BIN:-}" && -x "$REDIS_BIN" ]]; then
+    local dir
+    dir="$(dirname "$REDIS_BIN")"
+    if [[ -x "$dir/redis-cli" ]]; then
+      echo "$dir/redis-cli"
+      return 0
+    fi
+  fi
+  command -v redis-cli 2>/dev/null || true
+}
+
+_redis_ping() {
+  local cli
+  cli="$(_redis_cli)"
+  [[ -n "$cli" ]] || return 1
+  "$cli" -p 6379 ping 2>/dev/null | grep -q PONG
+}
+
+# 按端口查真正在监听的进程（pid 文件可能与现实脱节）
+# lsof 无匹配时返回 1，需吞掉以免 set -e 中断
+_port_pid() {
+  lsof -nP -iTCP:"$1" -sTCP:LISTEN -t 2>/dev/null | head -1 || true
+}
+
 # ------------------------------------------------------------------- up
 
 _do_up() {
-  # 1. redis
-  if _is_alive redis; then
-    echo "[redis] already running (pid $(_pid redis))"
+  # 1. redis —— 用端口探测判断，而不是只看 pid 文件
+  if _redis_ping; then
+    local real_pid
+    real_pid="$(_port_pid 6379)"
+    echo "[redis] already listening on 6379 (pid ${real_pid:-?})"
+    if [[ -n "$real_pid" && "$real_pid" != "$(_pid redis)" ]]; then
+      echo "        ⚠️ 该实例不是本脚本启动的；down 时会按端口一并关闭"
+      echo "$real_pid" > "$RUN_DIR/redis.pid"
+    fi
   else
     if [[ -z "$REDIS_BIN" || ! -x "$REDIS_BIN" ]]; then
       echo "ERROR: redis-server not found${REDIS_BIN:+ at $REDIS_BIN}"
@@ -53,9 +85,19 @@ _do_up() {
     fi
     $REDIS_BIN --daemonize no --port 6379 --dir "$RUN_DIR" --logfile "$LOG_DIR/redis.log" \
       >/dev/null 2>&1 &
-    echo $! > "$RUN_DIR/redis.pid"
-    echo "[redis] started (pid $!)"
-    sleep 1
+    local rpid=$!
+    echo "$rpid" > "$RUN_DIR/redis.pid"
+    local ok=0
+    for _ in $(seq 1 20); do
+      if _redis_ping; then ok=1; break; fi
+      sleep 0.5
+    done
+    if [[ "$ok" -ne 1 ]]; then
+      echo "ERROR: redis 启动失败（pid $rpid），最近 5 行日志："
+      tail -5 "$LOG_DIR/redis.log" 2>/dev/null | sed 's/^/       /'
+      exit 1
+    fi
+    echo "[redis] started (pid $rpid)"
   fi
 
   # 2. api
@@ -119,8 +161,20 @@ _do_down() {
     fi
     rm -f "$RUN_DIR/$name.pid"
   done
-  # redis-server --daemonize no 被我们直接 fork 了，再保险杀一次按端口
-  (command -v redis-cli &>/dev/null && redis-cli -p 6379 shutdown nosave 2>/dev/null) || true
+  # redis：pid 可能已失效或指向外部实例，统一按端口兜底
+  local rcli
+  rcli="$(_redis_cli)"
+  if [[ -n "$rcli" ]]; then
+    "$rcli" -p 6379 shutdown nosave 2>/dev/null || true
+  fi
+  local rpid
+  rpid="$(_port_pid 6379)"
+  if [[ -n "$rpid" ]]; then
+    echo "stopping redis (pid $rpid, by port)"
+    kill "$rpid" 2>/dev/null || true
+    sleep 0.5
+    kill -9 "$rpid" 2>/dev/null || true
+  fi
   # beat 调度文件
   rm -f "$ROOT/celerybeat-schedule.db" "$ROOT/celerybeat-schedule.db.bak"
   echo "全部停止"
@@ -131,14 +185,36 @@ _do_down() {
 _do_status() {
   echo "  NAME       PID       STATUS"
   echo "  ----       ---       ------"
-  for name in redis api worker beat; do
+
+  # redis 以端口探测为准：pid 文件可能指向已退出的进程
+  local rpid
+  rpid="$(_port_pid 6379)"
+  if _redis_ping; then
+    if [[ -n "$rpid" && "$rpid" == "$(_pid redis)" ]]; then
+      printf "  %-10s %-9s ✅ managed\n" redis "$rpid"
+    else
+      printf "  %-10s %-9s ✅ external（非本脚本启动）\n" redis "${rpid:-?}"
+    fi
+  else
+    printf "  %-10s %-9s ❌ 6379 无监听\n" redis "-"
+  fi
+
+  for name in api worker beat; do
     local pid=$(_pid "$name")
     if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
       printf "  %-10s %-9s ✅\n" "$name" "$pid"
     else
-      printf "  %-10s %-9s ❌\n" "$name" "${pid:-"-"}"
+      printf "  %-10s %-9s ❌\n" "$name" "${pid:--}"
     fi
   done
+
+  # 进程活着不代表能干活：broker 断了 worker/beat 会一直重试
+  if ! _redis_ping; then
+    echo ""
+    echo "  ⚠️ broker 不可达（redis 未运行）：worker/beat 会反复 Connection refused，"
+    echo "     POST /runs 仍返回 202，但任务无法派发"
+    echo "     解决：./scripts/start.sh down && ./scripts/start.sh up"
+  fi
 }
 
 # ------------------------------------------------------------------- main
