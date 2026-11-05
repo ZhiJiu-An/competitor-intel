@@ -34,7 +34,7 @@ def ensure_allowed(
     allow_private: bool = False,
     resolver=socket.getaddrinfo,
 ) -> None:
-    """校验 URL；不合规直接抛 CiError（BAD_ARGUMENT / BLOCKED）。"""
+    """校验 URL；不合规抛 CiError（BAD_ARGUMENT / BLOCKED / NETWORK_ERROR）。"""
     parsed = urlparse(url)
     if parsed.scheme not in ("http", "https") or not parsed.netloc:
         raise CiError(
@@ -57,9 +57,9 @@ def ensure_allowed(
         infos = resolver(host, None)
     except socket.gaierror as exc:
         raise CiError(
-            "BAD_ARGUMENT",
+            "NETWORK_ERROR",
             f"域名无法解析: {host}",
-            hint="检查 URL 拼写或网络连通性",
+            hint="检查网络连通性或 DNS 配置；沙箱/CI 环境常禁用出站解析",
             retryable=True,
         ) from exc
 

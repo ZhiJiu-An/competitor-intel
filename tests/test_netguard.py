@@ -1,5 +1,7 @@
 """出站地址校验：默认拒绝回环/内网，显式放开才允许。"""
 
+import socket
+
 import pytest
 
 from competitor_intel.core.errors import CiError
@@ -41,3 +43,15 @@ def test_allow_private_switch():
         allow_private=True,
         resolver=_resolver("127.0.0.1"),
     )
+
+
+def test_dns_failure_is_network_error():
+    """解析失败是网络问题而非参数问题：重试才有意义，别让调用方以为是 URL 写错。"""
+
+    def _unresolvable(host, port):
+        raise socket.gaierror(-2, "Name or service not known")
+
+    with pytest.raises(CiError) as excinfo:
+        ensure_allowed("https://example.com/pricing", resolver=_unresolvable)
+    assert excinfo.value.code == "NETWORK_ERROR"
+    assert excinfo.value.retryable is True
