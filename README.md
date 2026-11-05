@@ -175,19 +175,26 @@ ci serve --schedule                          # 同时启动 Celery worker + beat
 
 ## 接入 MCP 客户端（眼睛）
 
+先确认你用的是**装过 `[mcp]` 那个解释器**。venv 和 conda 都可以，关键是“安装”与“运行”必须是同一个环境：
+
 ```bash
+# venv
+python -m venv .venv && source .venv/bin/activate
 pip install -e ".[mcp]"
+
+# 或 conda（把 ci 换成你的环境名）
+conda run -n ci pip install -e ".[mcp]"
 ```
 
 注册了两种等价入口：`competitor-intel-mcp`（独立命令）与 `ci mcp`（同一个 stdio 服务）。
 
-在 Trae / Claude Desktop / Cursor 的 MCP 配置里加一条（路径换成实际绝对路径）：
+在 Trae / Claude Desktop / Cursor 的 MCP 配置里加一条，`command` 填**该环境的绝对路径**：
 
 ```json
 {
   "mcpServers": {
     "competitor-intel": {
-      "command": "/path/to/competitor-intel/.venv/bin/competitor-intel-mcp",
+      "command": "<你的环境>/bin/competitor-intel-mcp",
       "args": [],
       "env": {
         "COMPETITOR_INTEL_HOME": "/path/to/competitor-intel"
@@ -197,6 +204,14 @@ pip install -e ".[mcp]"
 }
 ```
 
+```bash
+which competitor-intel-mcp
+# conda 示例：
+# /opt/homebrew/Caskroom/miniforge/base/envs/ci/bin/competitor-intel-mcp
+```
+
+> `command` 不要写 PATH 里的通用 `python`：如果那个解释器没装 `[mcp]`，客户端只会报“导入失败”，看起来像项目缺依赖，实际是环境选错。
+>
 > 日志只写 stderr，stdout 全部留给 MCP 协议帧；客户端若显示无响应，先检查有没有别的东西往 stdout 打印。
 
 ### 工具
@@ -238,6 +253,7 @@ pip install -e ".[mcp]"
 | `NOT_FOUND` | 查询无结果，通常附带可用日期或候选项 |
 | `BAD_ARGUMENT` | 参数有歧义，如多页面竞品未指定 `page_url` |
 | `BLOCKED` | 出站地址被 SSRF 校验拦截（回环 / 内网 / 非 http(s)） |
+| `NETWORK_ERROR` | 域名解析失败或网络不可达（沙箱常禁用出站网络），可重试 |
 | `TIMEOUT` | 抓取或批量采集超时（批量采集用 `run_id` 继续查） |
 | `EXTRACTION_ERROR` | 页面能抓但抽取失败，已进复核队列 |
 | `REPORT_NOT_FOUND` | 还没有生成过报告 |
@@ -252,6 +268,15 @@ pip install -e ".[http,schedule]"
 ./scripts/start.sh status
 ./scripts/start.sh down
 ```
+
+脚本默认取 PATH 里的 `python3` 与 `redis-server`。若未激活项目环境，需显式指定，否则进程会起来但模块导入失败：
+
+```bash
+export PYTHON=/path/to/env/bin/python
+export REDIS_BIN=/path/to/env/bin/redis-server
+```
+
+`status` 以端口探测判断 redis（`managed` 为本脚本启动，`external` 为其他来源），`up` 在 redis 起不来时会直接报错并打印日志，不会假报就绪。
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
