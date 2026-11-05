@@ -30,4 +30,5 @@ celerybeat-schedule*
 
 # 本地写作草稿（不公开）
 articles/
+MVP.md
 </content>

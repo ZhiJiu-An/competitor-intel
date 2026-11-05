@@ -214,8 +214,10 @@ pip install -e ".[mcp]"
 
 两个写工具标注 `read_only_hint=false / open_world_hint=true`，客户端通常会先确认。
 
-- `crawl_page` 在进程内同步执行，页面不必写进 `targets.yaml`；结果照常落库，下次能算出差异。
+- `crawl_page` 在进程内同步执行，页面不必写进 `targets.yaml`；结果照常落库，下次能算出差异。页面指纹未变时不会重复抽取，而是直接返回最近一次快照（`note` 里会说明）。
 - `trigger_run` 同日同竞品幂等，重复触发返回同一个 `run_id`；等待超时会返回 `TIMEOUT` 并带 `run_id`，用 `get_run` 继续查，**不要重复触发**。
+- `trigger_run(force=true)` 会打破幂等：即使当天已成功也重新排队、同一个 `run_id` 重跑（改了配置或换了 key 后使用）；正在运行的 run 不会被抢占。
+- `list_changes` 的 `since` 是窗口起点（含）：基线取 `since` **之前**最近一条快照，所以 `since=今天` 也能看到今天发生的变化。
 
 ### 返回与错误
 
@@ -249,7 +251,7 @@ pip install -e ".[http,schedule]"
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
-| POST | `/runs` | 触发采集。同日同竞品幂等：首次 `202`，重复 `200` 且 `run_id` 不变 |
+| POST | `/runs` | 触发采集。同日同竞品幂等：首次 `202`，重复 `200` 且 `run_id` 不变；带 `force=true` 则同 `run_id` 重跑 |
 | GET | `/runs/{run_id}` | 状态（`queued/running/succeeded/partial/failed`）+ 计数指标 |
 | POST | `/crawl` | 临时抓单页，同步返回快照与报告链接 |
 | GET | `/snapshots` | 快照元数据，支持 `competitor/since/until/limit` |
@@ -280,11 +282,11 @@ curl localhost:8000/runs/<run_id>
 ```bash
 FEISHU_WEBHOOK=https://open.feishu.cn/open-apis/bot/v2/hook/xxxx
 FEISHU_KEYWORD=竞品分析        # webhook 若开了关键词校验，卡片标题会自动带上
-FEISHU_NOTIFY_MODE=changes     # changes=有字段级变化才推（默认）；always=每天都推
+FEISHU_NOTIFY_MODE=changes     # changes=无变化且正常才静音（默认）；always=每天都推
 REPORT_BASE_URL=http://127.0.0.1:8000   # 报告按钮的地址前缀；远程访问时改成实际域名
 ```
 
-`changes` 模式下没有字段级变化时只记一条 `feishu.skipped` 日志，不发消息；`always` 模式适合想每天确认采集健康度的场景。
+`changes` 模式下只有「无字段级变化 **且** run 正常结束」时才静音（只记一条 `feishu.skipped` 日志）；`failed` / `partial`（含抽取失败、被 robots 拦截）照常推送，避免故障被静音。`always` 模式适合想每天确认采集健康度的场景。
 
 推送失败只记 warning，**不影响 run 状态与返回值**。未配置 webhook 时内核完全不引入通知适配器。
 
@@ -303,7 +305,7 @@ REPORT_BASE_URL=http://127.0.0.1:8000   # 报告按钮的地址前缀；远程�
 | `REPORT_BASE_URL` | `http://127.0.0.1:8000` | 飞书卡片里报告按钮的地址前缀 |
 | `FEISHU_WEBHOOK` | 空 | 留空则不推送 |
 | `FEISHU_KEYWORD` | `竞品分析` | webhook 关键词校验时自动加进标题 |
-| `FEISHU_NOTIFY_MODE` | `changes` | `changes`=有字段级变化才推；`always`=每次都推 |
+| `FEISHU_NOTIFY_MODE` | `changes` | `changes`=无变化且正常才静音；`always`=每次都推 |
 | `REDIS_URL` | `redis://127.0.0.1:6379/0` | Celery broker / backend |
 | `DAILY_CRON_HOUR` | `9` | beat 每日触发小时 |
 | `CRAWLER_BROWSER_CHANNEL` | `chromium` | 浏览器通道；本机没装 Playwright 自带 chromium 时设 `chrome` |
@@ -383,11 +385,12 @@ CI_SMOKE=1 pytest   # 额外跑真实站点冒烟（会消耗 token）
 
 - 页面改版导致 `main_selector` 失效时，指纹可能取错容器（会告警并降级整页指纹）
 - Crawl4AI 的 L1 缓存无 TTL，因此默认 `cache_mode: bypass`，增量只由业务指纹负责
+- SSRF 校验在「发起抓取前」解析一次域名，浏览器自己还会再解析一次；理论上存在 DNS rebinding 时间窗（自建内网服务场景请配合 `ALLOW_PRIVATE_NETWORKS` 显式开关使用）
+- `targets.yaml` 的 URL 在加载期只校验 http/https 协议；需要抓内网地址时请显式设置 `ALLOW_PRIVATE_NETWORKS=1`
 - macOS 本地跑 Celery worker 需 `--pool=solo`（fork 子进程里启动 Playwright 易崩），`scripts/start.sh` 已处理
 - MCP 为单机 stdio，不做多用户鉴权与并发调度
 
 ## 文档
 
 - [CONTRIBUTING.md](./CONTRIBUTING.md)：架构边界与开发约定
-- [MVP.md](./MVP.md)：范围、验收标准与里程碑
 - [LICENSE](./LICENSE)：Apache-2.0
