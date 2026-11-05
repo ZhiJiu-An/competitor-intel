@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "competitor-intel"
-version = "0.1.0"
+version = "0.1.1"
 description = "竞品情报系统：Schema 契约驱动的竞品采集、结构化抽取与增量 diff 报告管道"
 readme = "README.md"
 license = {text = "Apache-2.0"}
